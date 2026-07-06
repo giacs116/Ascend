@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
+  <title>Ascend</title>
+  <meta name="description" content="Ascend — your personal fitness companion" />
+  <meta name="theme-color" content="#0B0C0F" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Ascend" />
+  <link rel="manifest" href="/manifest.webmanifest" />
+  <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+  <link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png" />
+  <link rel="stylesheet" href="/css/styles.css" />
+</head>
+<body>
+  <div id="app">
+    <div class="boot-splash">
+      <svg class="boot-logo" viewBox="0 0 100 100" width="72" height="72" aria-hidden="true">
+        <polygon points="36,24 4,80 68,80" fill="#C8F542"/>
+        <polygon points="64,34 34,80 96,80" fill="#71911B" opacity="0.85"/>
+        <polygon points="36,24 4,80 68,80" fill="#C8F542"/>
+        <circle cx="81.5" cy="18.5" r="5.5" fill="#F3F5F7"/>
+      </svg>
+      <div class="boot-word">ASCEND</div>
+    </div>
+  </div>
+  <script type="module" src="/js/main.js"></script>
+  <script>
+    if ('serviceWorker' in navigator && window.isSecureContext) {
+      addEventListener('load', () => navigator.serviceWorker.register('/sw.js').catch(() => {}));
+    }
+  </script>
+</body>
+</html>

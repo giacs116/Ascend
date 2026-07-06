@@ -1,0 +1,15 @@
+{
+  "name": "ascend",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Ascend — your personal fitness companion. Runs on your PC, opens on your phone.",
+  "scripts": {
+    "start": "node --disable-warning=ExperimentalWarning server/index.js"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.110.0",
+    "express": "^5.2.1",
+    "qrcode-terminal": "^0.12.0"
+  }
+}
