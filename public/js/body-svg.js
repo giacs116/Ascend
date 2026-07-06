@@ -64,39 +64,92 @@ const BACK = {
   },
 };
 
+let uid = 0;
+
 /**
  * Build one view of the body.
  * @param {'front'|'back'} view
  * @param {(key:string)=>'on'|'off'} statusFor
- * @param {{mini?:boolean, onTap?:(key:string)=>void}} opts
+ * @param {{mini?:boolean, glow?:boolean, onTap?:(key:string)=>void}} opts
  */
-export function buildBodySvg(view, statusFor, { mini = false, onTap } = {}) {
+export function buildBodySvg(view, statusFor, { mini = false, glow = false, onTap } = {}) {
   const spec = view === 'back' ? BACK : FRONT;
+  const id = ++uid;
   const svg = sv('svg', { viewBox: '0 0 220 460', class: `body-svg${mini ? ' body-svg--mini' : ''}` });
 
-  // head is shared
-  const head = sv('circle', { cx: CX, cy: 34, r: 19, class: 'body-sil' });
-  svg.append(head);
+  // Gradient fills (stops read CSS vars, so they follow the theme) + trained-muscle glow
+  const defs = sv('defs');
+  const grad = (gid, a, b) => {
+    const g = sv('linearGradient', { id: gid, x1: 0, y1: 0, x2: 0, y2: 1 });
+    g.append(
+      sv('stop', { offset: '0%', style: `stop-color: var(${a})` }),
+      sv('stop', { offset: '100%', style: `stop-color: var(${b})` }));
+    return g;
+  };
+  defs.append(
+    grad(`bOn-${id}`, '--body-on-a', '--body-on-b'),
+    grad(`bOff-${id}`, '--body-off-a', '--body-off-b'));
+  if (glow) {
+    const f = sv('filter', { id: `bGlow-${id}`, x: '-30%', y: '-30%', width: '160%', height: '160%' });
+    const blur = sv('feGaussianBlur', { stdDeviation: 5, result: 'b' });
+    const merge = sv('feMerge');
+    merge.append(sv('feMergeNode', { in: 'b' }), sv('feMergeNode', { in: 'SourceGraphic' }));
+    f.append(blur, merge);
+    defs.append(f);
+  }
+  svg.append(defs);
 
-  const addPath = (d, cls, key = null) => {
-    const p = sv('path', { d, class: cls });
+  const gOn = sv('g', glow ? { filter: `url(#bGlow-${id})` } : {});
+  const gRest = sv('g');
+  svg.append(gRest, gOn);
+
+  // head is shared
+  gRest.append(sv('circle', { cx: CX, cy: 34, r: 19, class: 'body-sil' }));
+
+  const addPath = (parent, d, cls, key = null, fill = null) => {
+    const p = sv('path', { d, class: cls, fill });
     if (key) {
       p.dataset.muscle = key;
       if (onTap) p.addEventListener('pointerdown', (e) => { e.stopPropagation(); onTap(key); });
     }
-    svg.append(p);
+    parent.append(p);
     return p;
   };
 
-  for (const pts of spec.sil.center) addPath(poly(pts), 'body-sil');
-  for (const pts of spec.sil.side) { addPath(poly(pts, 1), 'body-sil'); addPath(poly(pts, -1), 'body-sil'); }
+  for (const pts of spec.sil.center) addPath(gRest, poly(pts), 'body-sil');
+  for (const pts of spec.sil.side) { addPath(gRest, poly(pts, 1), 'body-sil'); addPath(gRest, poly(pts, -1), 'body-sil'); }
 
   for (const [key, shapes] of Object.entries(spec.muscles)) {
-    const cls = `body-m body-m--${statusFor(key)}`;
-    for (const pts of shapes.center || []) addPath(poly(pts), cls, key);
-    for (const pts of shapes.side || []) { addPath(poly(pts, 1), cls, key); addPath(poly(pts, -1), cls, key); }
+    const on = statusFor(key) === 'on';
+    const parent = on ? gOn : gRest;
+    const cls = `body-m body-m--${on ? 'on' : 'off'}`;
+    const fill = `url(#${on ? 'bOn' : 'bOff'}-${id})`;
+    for (const pts of shapes.center || []) addPath(parent, poly(pts), cls, key, fill);
+    for (const pts of shapes.side || []) { addPath(parent, poly(pts, 1), cls, key, fill); addPath(parent, poly(pts, -1), cls, key, fill); }
   }
   return svg;
+}
+
+/**
+ * A depth-sliced stack of one body view — stacked copies at increasing translateZ
+ * give the figure real thickness when the parent card rotates in 3D.
+ */
+export function buildBodyStack(view, statusFor, { slices = 5, depth = 16 } = {}) {
+  const stack = document.createElement('div');
+  stack.className = 'body-stack';
+  for (let i = 0; i < slices; i++) {
+    const front = i === slices - 1;
+    const svg = buildBodySvg(view, statusFor, { glow: front });
+    const z = -depth / 2 + (depth * i) / (slices - 1);
+    svg.style.transform = `translateZ(${z.toFixed(1)}px)`;
+    if (!front) {
+      const k = i / (slices - 1);
+      svg.style.filter = `brightness(${(0.45 + 0.5 * k).toFixed(2)}) saturate(0.85)`;
+      svg.style.pointerEvents = 'none';
+    }
+    stack.append(svg);
+  }
+  return stack;
 }
 
 // Which muscle keys are visible on each view (for the "flip to see" hint)

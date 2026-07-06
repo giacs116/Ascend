@@ -49,7 +49,7 @@ export async function renderToday(root) {
 
   // ── Rings ──────────────────────────────────────────────────
   const calPct = t.calories ? s.calories / t.calories : 0;
-  const rings = h('div', { class: 'card rings-card' },
+  const rings = h('div', { class: 'card card--rings rings-card' },
     ringMeter({ pct: calPct, color: cssVar('--c-accent'), value: fmtInt(s.calories), sub: `/ ${fmtInt(t.calories || 0)} kcal`, label: 'Calories' }),
     ringMeter({ pct: t.protein_g ? s.protein_g / t.protein_g : 0, color: cssVar('--c-protein'), value: `${Math.round(s.protein_g)}g`, sub: `/ ${t.protein_g || 0} g`, label: 'Protein' }),
     ringMeter({ pct: t.water_ml ? s.water_ml / t.water_ml : 0, color: cssVar('--c-water'), value: String(waterDisp(s.water_ml)), sub: `/ ${waterDisp(t.water_ml || 0)} ${waterUnit()}`, label: 'Water' }),
@@ -97,7 +97,7 @@ export async function renderToday(root) {
   const waterCard = h('div', { class: 'card water-card' });
   const renderWater = (summary) => {
     waterCard.replaceChildren(
-      h('div', { class: 'water-viz', style: { color: cssVar('--c-water') } }, ico('droplet', 30)),
+      h('div', { class: 'water-viz row-ico tint-blue', style: { color: 'var(--c-water)', width: '46px', height: '46px', borderRadius: '14px' } }, ico('droplet', 24)),
       h('div', { class: 'water-main' },
         h('div', { class: 'wv' }, `${waterDisp(summary.water_ml)} `, h('span', { class: 'u' }, `/ ${waterDisp(t.water_ml || 0)} ${waterUnit()}`)),
         h('div', { class: 'water-btns' },
@@ -172,13 +172,13 @@ export async function renderToday(root) {
 
   view.append(h('div', { class: 'tiles' },
     h('button', { class: 'tile', style: { textAlign: 'left' }, onclick: () => openWeighIn({ onDone: () => renderTodayFresh(root) }) },
-      h('div', { class: 'label' }, ico('scale', 14), 'Weight'),
+      h('div', { class: 'label' }, h('span', { class: 'tile-ico tint-teal', style: { color: 'var(--c-protein)' } }, ico('scale', 14)), 'Weight'),
       h('div', { class: 'value' }, lastW ? String(wDisp(lastW.weight_kg)) : '—', h('span', { class: 'u' }, wUnit())),
       prevW ? h('div', { class: `delta ${deltaGood ? 'up' : 'down'}` }, `${deltaKg >= 0 ? '+' : ''}${wDisp(Math.abs(deltaKg)) * Math.sign(deltaKg) || 0} ${wUnit()} vs last`) : h('div', { class: 'delta' }, 'Tap to weigh in'),
       wt.length > 1 ? h('div', { class: 'mt-8' }, sparkline({ points: wt.map((p) => p.weight_kg), color: cssVar('--c-accent') })) : null,
     ),
     h('button', { class: 'tile', style: { textAlign: 'left' }, onclick: () => (day.workouts.length ? App.go('#/train') : startWorkout()) },
-      h('div', { class: 'label' }, ico('barbell', 14), 'Today’s training'),
+      h('div', { class: 'label' }, h('span', { class: 'tile-ico', style: { background: 'var(--accent-soft)', color: 'var(--accent)' } }, ico('barbell', 14)), 'Today’s training'),
       day.workouts.length
         ? h('div', {}, h('div', { class: 'value', style: { fontSize: '17px', lineHeight: 1.25, marginTop: '6px' } }, day.workouts.map((w) => w.name || w.type).join(', ')),
             h('div', { class: 'delta up' }, 'Done ✓'))

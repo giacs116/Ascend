@@ -1,6 +1,6 @@
 // Minimal service worker: cache the shell for fast loads on secure contexts.
 // Data always comes from the network — Ascend's data lives on your PC.
-const CACHE = 'ascend-v2';
+const CACHE = 'ascend-v3';
 const SHELL = ['/', '/css/styles.css', '/manifest.webmanifest', '/icons/icon-192.png'];
 
 self.addEventListener('install', (e) => {

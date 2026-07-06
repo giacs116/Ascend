@@ -129,8 +129,15 @@ export async function renderProgress(root) {
   }
 
   function tile(label, value, unit, icon) {
+    const tints = {
+      barbell: ['var(--accent-soft)', 'var(--accent)'],
+      trend: ['color-mix(in srgb, var(--orange) 15%, transparent)', 'var(--orange)'],
+      flame: ['color-mix(in srgb, var(--c-carbs) 15%, transparent)', 'var(--c-carbs)'],
+      utensils: ['color-mix(in srgb, var(--c-protein) 14%, transparent)', 'var(--c-protein)'],
+    };
+    const [bg, fg] = tints[icon] || ['var(--surface-2)', 'var(--text-2)'];
     return h('div', { class: 'tile' },
-      h('div', { class: 'label' }, ico(icon, 14), label),
+      h('div', { class: 'label' }, h('span', { class: 'tile-ico', style: { background: bg, color: fg } }, ico(icon, 14)), label),
       h('div', { class: 'value' }, value, unit ? h('span', { class: 'u' }, ` ${unit}`) : null));
   }
 }

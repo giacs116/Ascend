@@ -5,7 +5,7 @@
   "type": "module",
   "description": "Ascend — your personal fitness companion. Runs on your PC, opens on your phone.",
   "scripts": {
-    "start": "node --disable-warning=ExperimentalWarning server/index.js"
+    "start": "node --disable-warning=ExperimentalWarning --env-file-if-exists=.env server/index.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.110.0",

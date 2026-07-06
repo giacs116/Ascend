@@ -3,7 +3,7 @@
 import { h, todayStr, fmtShort, vibrate, cssVar } from '../util.js';
 import { api } from '../api.js';
 import { ico, toast, sheet, spinner } from '../ui.js';
-import { buildBodySvg, pictogram } from '../body-svg.js';
+import { buildBodyStack, pictogram } from '../body-svg.js';
 import { App } from '../main.js';
 
 export async function renderBody(root) {
@@ -36,55 +36,79 @@ export async function renderBody(root) {
       ? h('span', { class: 'legend-pill legend-pill--cardio' }, ico('run', 13), `Cardio ×${data.cardio.sessions}${data.cardio.minutes ? ` · ${data.cardio.minutes} min` : ''}`)
       : null));
 
-  // ── Spinnable stage ────────────────────────────────────────
-  let deg = 0;
-  const front = buildBodySvg('front', statusFor);
-  const back = buildBodySvg('back', statusFor);
-  back.classList.add('body-svg--back');
-  const card = h('div', { class: 'body-card' }, front, back);
+  // ── Spinnable 3D stage ─────────────────────────────────────
+  const frontStack = buildBodyStack('front', statusFor);
+  const backStack = buildBodyStack('back', statusFor);
+  backStack.classList.add('body-stack--back');
+  const card = h('div', { class: 'body-card' }, frontStack, backStack);
   const hint = h('div', { class: 'body-hint' }, '↔ Drag to spin · tap a muscle');
-  const stage = h('div', { class: 'body-stage' }, card, hint);
-  view.append(h('div', { class: 'card', style: { padding: '10px 6px 6px' } }, stage));
+  const shadow = h('div', { class: 'body-shadow' });
+  const stage = h('div', { class: 'body-stage' }, shadow, card, hint);
+  view.append(h('div', { class: 'card card--stage', style: { padding: '10px 6px 6px' } }, stage));
 
-  const apply = (transition) => {
-    card.style.transition = transition ? 'transform 0.5s cubic-bezier(0.2, 0.8, 0.25, 1)' : 'none';
-    card.style.transform = `rotateY(${deg}deg)`;
-  };
-  apply(false);
+  // rotation state: baseDeg (settled) + dragOff (live drag) + tween (snap/momentum) + idle sway
+  let baseDeg = 0, dragOff = 0, dragging = false, tween = null, hinted = false;
+  let startX = 0, moved = 0, downMuscle = null, lastX = 0, lastT = 0, vel = 0;
 
-  let dragging = false, startX = 0, startDeg = 0, moved = 0, downMuscle = null, hinted = false;
+  const spinTo = (target, dur = 650) => { tween = { from: baseDeg, to: target, t0: performance.now(), dur }; };
+
+  (function loop(now) {
+    if (!stage.isConnected) return;
+    if (tween) {
+      const p = Math.min(1, (now - tween.t0) / tween.dur);
+      baseDeg = tween.from + (tween.to - tween.from) * (1 - Math.pow(1 - p, 3));
+      if (p >= 1) { baseDeg = tween.to; tween = null; }
+    }
+    const idle = !dragging && !tween;
+    const sway = idle ? Math.sin(now / 950) * 5 : 0;
+    const bob = Math.sin(now / 1350) * 3;
+    card.style.transform = `translateY(${bob.toFixed(1)}px) rotateY(${(baseDeg + dragOff + sway).toFixed(2)}deg)`;
+    const edge = Math.abs(Math.sin(((baseDeg + dragOff + sway) * Math.PI) / 180));
+    shadow.style.transform = `translateX(-50%) scaleX(${(1 - edge * 0.45).toFixed(2)})`;
+    requestAnimationFrame(loop);
+  })(performance.now());
+
   stage.addEventListener('pointerdown', (e) => {
-    dragging = true; moved = 0; startX = e.clientX; startDeg = deg;
+    dragging = true; moved = 0; vel = 0;
+    startX = lastX = e.clientX; lastT = performance.now();
+    if (tween) { baseDeg = tween.to; tween = null; }
     downMuscle = e.target.closest?.('[data-muscle]')?.dataset.muscle || null;
     stage.setPointerCapture?.(e.pointerId);
   });
   stage.addEventListener('pointermove', (e) => {
     if (!dragging) return;
+    const nowT = performance.now();
     const dx = e.clientX - startX;
     moved = Math.max(moved, Math.abs(dx));
     if (moved > 4 && !hinted) { hinted = true; hint.classList.add('fade'); }
-    deg = startDeg + dx * 0.5;
-    apply(false);
+    if (nowT - lastT > 12) { vel = (e.clientX - lastX) / (nowT - lastT); lastX = e.clientX; lastT = nowT; }
+    dragOff = dx * 0.55;
   });
   const release = () => {
     if (!dragging) return;
     dragging = false;
     if (moved < 8 && downMuscle) {
+      dragOff = 0;
       vibrate(8);
       openMuscleSheet(muscles[downMuscle], data);
     } else {
-      deg = Math.round(deg / 180) * 180;
-      apply(true);
+      baseDeg += dragOff;
+      dragOff = 0;
+      // momentum: a real flick carries the spin onward in its direction
+      const flick = Math.abs(vel) > 0.45 ? Math.sign(vel) * 180 : 0;
+      spinTo(Math.round((baseDeg + flick * 0.75) / 180) * 180, flick ? 750 : 550);
     }
     downMuscle = null;
   };
   stage.addEventListener('pointerup', release);
   stage.addEventListener('pointercancel', release);
 
-  // spin-to-back button for discoverability
+  // spin button for discoverability
   view.append(h('div', { class: 'flex', style: { justifyContent: 'center', marginBottom: '4px' } },
-    h('button', { class: 'btn btn--ghost btn--sm', onclick: () => { deg += 180; apply(true); hinted = true; hint.classList.add('fade'); } },
-      ico('repeat', 15), 'Spin around')));
+    h('button', { class: 'btn btn--ghost btn--sm', onclick: () => {
+      hinted = true; hint.classList.add('fade');
+      spinTo(Math.round(baseDeg / 180) * 180 + 180, 750);
+    } }, ico('repeat', 15), 'Spin around')));
 
   // ── Summary + chips (the readable twin of the picture) ─────
   view.append(h('p', { class: 'center small', style: { margin: '8px 0 12px', color: 'var(--text-2)', fontWeight: 650 } },

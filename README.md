@@ -35,14 +35,15 @@ Targets are computed with the Mifflin-St Jeor formula from your profile (and re-
 
 ## Unlock the AI features
 
-The coach chat, photo calorie estimates and form checks run on Anthropic's Claude:
+The coach chat, photo calorie estimates, form checks and AI exercise recommendations run on Anthropic's Claude. The key lives in the **`.env` file** in this folder:
 
 1. Get an API key at **console.anthropic.com** (pay-as-you-go)
-2. In Ascend: **Settings → AI coach & vision** → paste the key → *Test connection*
+2. Open `.env` (in this folder) with Notepad and fill in:
+   `ANTHROPIC_API_KEY=sk-ant-your-key-here`
+3. Restart Ascend (`npm start`) — the startup banner will say **AI: connected ✓**
+4. In the app: **Settings → AI coach & vision → Test connection**
 
-The key is stored only in the database on this PC and is never included in exports. Default model is Claude Opus 4.8; you can switch models in Settings. Typical costs are small — a chat reply or meal estimate is a few cents; a form check (several images) somewhat more.
-
-*(Alternatively, set the `ANTHROPIC_API_KEY` environment variable before `npm start`.)*
+The key never leaves this PC and is never included in exports. Default model is Claude Opus 4.8; you can switch models in Settings. Typical costs are small — a chat reply or meal estimate is a few cents; a form check (several images) somewhat more.
 
 ## Your data
 

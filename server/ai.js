@@ -1,6 +1,11 @@
 import Anthropic from '@anthropic-ai/sdk';
+import { readFileSync, statSync } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { db, getSetting, setSetting, getProfile, latestWeight, now } from './db.js';
 import { computeTargets, bmi, est1RM } from './calc.js';
+
+const ENV_PATH = path.join(path.dirname(path.dirname(fileURLToPath(import.meta.url))), '.env');
 
 export const DEFAULT_MODEL = 'claude-opus-4-8';
 export const MODELS = [
@@ -11,8 +16,25 @@ export const MODELS = [
 
 class NoKeyError extends Error {}
 
+// The .env file is the primary home for the key. It's re-read whenever the file
+// changes, so pasting a key takes effect immediately — no server restart needed.
+let envCache = { mtime: -1, key: null };
+function keyFromEnvFile() {
+  try {
+    const mtime = statSync(ENV_PATH).mtimeMs;
+    if (mtime !== envCache.mtime) {
+      const text = readFileSync(ENV_PATH, 'utf8');
+      const m = /^\s*ANTHROPIC_API_KEY\s*=\s*("?)([^"\r\n]+)\1\s*$/m.exec(text);
+      envCache = { mtime, key: m ? m[2].trim() : null };
+    }
+    return envCache.key;
+  } catch {
+    return null;
+  }
+}
+
 function getApiKey() {
-  return getSetting('api_key') || process.env.ANTHROPIC_API_KEY || null;
+  return keyFromEnvFile() || process.env.ANTHROPIC_API_KEY || getSetting('api_key') || null;
 }
 
 export function aiStatus() {
@@ -21,7 +43,7 @@ export function aiStatus() {
   return {
     hasKey: !!key,
     last4: key ? key.slice(-4) : null,
-    fromEnv: !getSetting('api_key') && !!process.env.ANTHROPIC_API_KEY,
+    fromEnv: !!(keyFromEnvFile() || process.env.ANTHROPIC_API_KEY),
     model: getSetting('ai_model') || DEFAULT_MODEL,
     usage,
   };

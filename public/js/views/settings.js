@@ -78,8 +78,10 @@ export async function renderSettings(root) {
       h('div', { class: 'flex', style: { marginBottom: '12px' } },
         h('div', { class: 'row-ico', style: { background: 'var(--accent-soft)', color: 'var(--accent)' } }, ico('key')),
         h('div', { class: 'grow' },
-          h('div', { style: { fontWeight: 700, fontSize: '14.5px' } }, `API key connected ${ai.fromEnv ? '(from environment)' : ''}`),
-          h('div', { class: 'hint' }, `ends in …${ai.last4}`)),
+          h('div', { style: { fontWeight: 700, fontSize: '14.5px' } }, 'API key connected'),
+          h('div', { class: 'hint' }, ai.fromEnv
+            ? `loaded from the .env file on your PC (…${ai.last4})`
+            : `saved in the app (…${ai.last4}) — tip: move it to the .env file`)),
         !ai.fromEnv ? h('button', { class: 'btn btn--ghost btn--sm', onclick: async () => {
           const ok = await confirmSheet({ title: 'Remove API key?', confirmLabel: 'Remove', danger: true });
           if (ok) { await api('/settings/key', { method: 'DELETE' }); rerender(); }
@@ -92,23 +94,21 @@ export async function renderSettings(root) {
           `${ai.usage.requests} requests · ${fmtInt(ai.usage.input + ai.usage.output)} tokens used`)),
     );
   } else {
-    const keyInput = h('input', { class: 'input', type: 'password', placeholder: 'sk-ant-…', autocomplete: 'off' });
+    const step = (n, ...content) => h('div', { class: 'flex', style: { alignItems: 'flex-start', gap: '10px', marginBottom: '10px' } },
+      h('span', { style: { width: '22px', height: '22px', borderRadius: '8px', background: 'var(--accent-soft)', color: 'var(--accent)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '12px', fontWeight: 800, flexShrink: 0, marginTop: '1px' } }, String(n)),
+      h('div', { class: 'small', style: { color: 'var(--text-2)', lineHeight: 1.55 } }, ...content));
     aiCard.append(
-      h('p', { class: 'small', style: { lineHeight: 1.6, marginBottom: '12px', color: 'var(--text-2)' } },
-        'The coach chat, photo calorie estimates and form checks run on Anthropic’s Claude. Grab an API key at ',
-        h('b', {}, 'console.anthropic.com'),
-        ' (pay-as-you-go), paste it here, and everything lights up. The key is stored only on your PC.'),
-      h('div', { class: 'field' }, keyInput),
-      h('button', { class: 'btn btn--primary btn--block', onclick: async () => {
-        try {
-          await api('/settings/key', { method: 'PUT', body: { api_key: keyInput.value } });
-          toast('Key saved — testing it now…', 'good');
-          await App.refresh();
-          renderSettings(root);
-          try { await api('/settings/key/test', { method: 'POST' }); toast('AI is live ✨', 'good'); }
-          catch (e) { toast(e.message, 'bad', 4000); }
-        } catch (e) { toast(e.message, 'bad', 3500); }
-      } }, 'Save key'),
+      h('p', { class: 'small', style: { lineHeight: 1.6, marginBottom: '14px', color: 'var(--text-2)' } },
+        'The coach chat, photo calorie estimates, form checks and AI exercise recs run on Anthropic’s Claude. The key lives in a file on your PC — set it up once:'),
+      step(1, 'Get an API key at ', h('b', {}, 'console.anthropic.com'), ' (pay-as-you-go).'),
+      step(2, 'On your PC, open ', h('span', { class: 'kbd-key' }, '.env'), ' in the ', h('span', { class: 'kbd-key' }, 'Ascend'), ' folder with Notepad.'),
+      step(3, 'Fill in the line: ', h('span', { class: 'kbd-key' }, 'ANTHROPIC_API_KEY=sk-ant-…')),
+      step(4, 'Save the file, come back here and tap the button below — no restart needed.'),
+      h('button', { class: 'btn btn--soft btn--block mt-8', onclick: async () => {
+        await App.refresh();
+        renderSettings(root);
+        toast(App.boot.settings.ai.hasKey ? 'Key found ✓' : 'No key found in .env — the line should read ANTHROPIC_API_KEY=sk-ant-… (then save the file).', App.boot.settings.ai.hasKey ? 'good' : 'bad', 4000);
+      } }, 'I’ve added it — check again'),
     );
   }
   view.append(aiCard);

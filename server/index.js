@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import qrcode from 'qrcode-terminal';
 import { api } from './routes.js';
 import { ensureIcons } from './icons.js';
+import { aiStatus } from './ai.js';
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const PUBLIC = path.join(ROOT, 'public');
@@ -69,6 +70,11 @@ app.listen(PORT, '0.0.0.0', () => {
     console.log(dim('  Scan with your phone camera:'));
     qrcode.generate(phoneUrl, { small: true });
   }
+  const ai = aiStatus();
+  console.log(ai.hasKey
+    ? green(`  AI: connected ✓ `) + dim(`(key …${ai.last4}${ai.fromEnv ? ' from .env' : ''}, model ${ai.model})`)
+    : dim('  AI: off — put your ANTHROPIC_API_KEY in the .env file (see README) to wake the coach.'));
+  console.log('');
   console.log(dim('  Tip: if Windows asks about the firewall, click "Allow" for Private networks.'));
   console.log(dim('  Tip: on the phone, use the browser menu → "Add to Home Screen" to install Ascend.'));
   console.log('');

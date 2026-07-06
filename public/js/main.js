@@ -25,11 +25,11 @@ const routes = {
 };
 
 const NAV = [
-  ['#/today', 'Today', 'flame'],
-  ['#/food', 'Food', 'utensils'],
-  ['#/train', 'Train', 'barbell'],
-  ['#/progress', 'Progress', 'chart'],
-  ['#/coach', 'Coach', 'sparkles'],
+  ['#/today', 'Today', 'flame', 'var(--accent)'],
+  ['#/food', 'Food', 'utensils', 'var(--c-carbs)'],
+  ['#/train', 'Train', 'barbell', 'var(--orange)'],
+  ['#/progress', 'Progress', 'chart', 'var(--c-water)'],
+  ['#/coach', 'Coach', 'sparkles', 'var(--violet)'],
 ];
 
 export const App = {
@@ -76,9 +76,12 @@ export const App = {
     let current = location.hash || '#/today';
     // live workouts, the body map and form checks live under the Train tab
     if (current.startsWith('#/workout') || current.startsWith('#/formcheck') || current.startsWith('#/body')) current = '#/train';
-    this.navEl.replaceChildren(...NAV.map(([hash, label, icon]) =>
-      h('button', { class: current.startsWith(hash) ? 'active' : '', onclick: () => this.go(hash) },
-        ico(icon), label)));
+    this.navEl.replaceChildren(...NAV.map(([hash, label, icon, color]) => {
+      const btn = h('button', { class: current.startsWith(hash) ? 'active' : '', onclick: () => this.go(hash) },
+        ico(icon), label);
+      btn.style.setProperty('--tab-c', color);
+      return btn;
+    }));
   },
 
   route() {
