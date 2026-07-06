@@ -177,14 +177,40 @@ export async function renderToday(root) {
       prevW ? h('div', { class: `delta ${deltaGood ? 'up' : 'down'}` }, `${deltaKg >= 0 ? '+' : ''}${wDisp(Math.abs(deltaKg)) * Math.sign(deltaKg) || 0} ${wUnit()} vs last`) : h('div', { class: 'delta' }, 'Tap to weigh in'),
       wt.length > 1 ? h('div', { class: 'mt-8' }, sparkline({ points: wt.map((p) => p.weight_kg), color: cssVar('--c-accent') })) : null,
     ),
-    h('button', { class: 'tile', style: { textAlign: 'left' }, onclick: () => (day.workouts.length ? App.go('#/train') : startWorkout()) },
-      h('div', { class: 'label' }, h('span', { class: 'tile-ico', style: { background: 'var(--accent-soft)', color: 'var(--accent)' } }, ico('barbell', 14)), 'Today’s training'),
-      day.workouts.length
-        ? h('div', {}, h('div', { class: 'value', style: { fontSize: '17px', lineHeight: 1.25, marginTop: '6px' } }, day.workouts.map((w) => w.name || w.type).join(', ')),
-            h('div', { class: 'delta up' }, 'Done ✓'))
-        : h('div', {}, h('div', { class: 'value', style: { fontSize: '17px', lineHeight: 1.25, marginTop: '6px' } }, 'Rest day?'),
-            h('div', { class: 'delta' }, 'Tap to start a session')),
-    ),
+    (() => {
+      const sched = boot.schedule_today;
+      const vStyle = { fontSize: '17px', lineHeight: 1.25, marginTop: '6px' };
+      let valueText, deltaEl, onTap;
+      if (day.workouts.length) {
+        valueText = day.workouts.map((w) => w.name || w.type).join(', ');
+        deltaEl = h('div', { class: 'delta up' }, 'Done ✓');
+        onTap = () => App.go('#/train');
+      } else if (sched?.kind === 'rest') {
+        valueText = 'Rest day 😌';
+        deltaEl = h('div', { class: 'delta' }, 'On the schedule — recover well');
+        onTap = () => App.go('#/train');
+      } else if (sched?.kind === 'workout') {
+        valueText = `Planned: ${sched.label || 'Workout'}`;
+        deltaEl = h('div', { class: 'delta up' }, 'Tap to start it');
+        onTap = async () => {
+          if (sched.routine_id) {
+            try {
+              const { routines } = await api('/routines');
+              const planned = routines.find((r) => r.id === sched.routine_id);
+              if (planned) return startWorkout({ routine: planned });
+            } catch {}
+          }
+          startWorkout();
+        };
+      } else {
+        valueText = 'Nothing planned';
+        deltaEl = h('div', { class: 'delta' }, 'Tap to start a session');
+        onTap = () => startWorkout();
+      }
+      return h('button', { class: 'tile', style: { textAlign: 'left' }, onclick: onTap },
+        h('div', { class: 'label' }, h('span', { class: 'tile-ico', style: { background: 'var(--accent-soft)', color: 'var(--accent)' } }, ico('barbell', 14)), 'Today’s training'),
+        h('div', {}, h('div', { class: 'value', style: vStyle }, valueText), deltaEl));
+    })(),
   ));
 }
 

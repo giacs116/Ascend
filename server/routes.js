@@ -86,6 +86,7 @@ api.get('/bootstrap', (req, res) => {
     workoutsThisWeek: profile
       ? db.prepare('SELECT COUNT(*) c FROM workouts WHERE date > ? AND date <= ?').get(shiftDate(today, -7), today).c
       : 0,
+    schedule_today: profile ? effectiveScheduleFor(today) : null,
   });
 });
 
@@ -430,6 +431,72 @@ api.put('/routines/:id', (req, res) => {
 
 api.delete('/routines/:id', (req, res) => {
   db.prepare('DELETE FROM routines WHERE id = ?').run(+req.params.id);
+  res.json({ ok: true });
+});
+
+// ── Workout schedule (calendar) ──────────────────────────────
+function effectiveScheduleFor(date) {
+  const d = db.prepare('SELECT * FROM schedule_days WHERE date = ?').get(date);
+  if (d) return { kind: d.kind, label: d.label, routine_id: d.routine_id, source: 'date' };
+  const dow = new Date(date + 'T12:00:00').getDay();
+  const w = db.prepare('SELECT * FROM schedule_weekly WHERE dow = ?').get(dow);
+  if (w) return { kind: w.kind, label: w.label, routine_id: w.routine_id, source: 'weekly' };
+  return null;
+}
+
+api.get('/schedule', (req, res) => {
+  const { from, to } = req.query;
+  if (!isDate(from) || !isDate(to) || to < from) return bad(res, 'Bad range.');
+  const span = Math.round((new Date(to + 'T12:00:00') - new Date(from + 'T12:00:00')) / 86400000) + 1;
+  if (span > 70) return bad(res, 'Range too large.');
+  const days = {};
+  for (let i = 0; i < span; i++) {
+    const d = shiftDate(from, i);
+    const entry = effectiveScheduleFor(d);
+    if (entry) days[d] = entry;
+  }
+  const weekly = {};
+  for (const w of db.prepare('SELECT * FROM schedule_weekly').all()) {
+    weekly[w.dow] = { kind: w.kind, label: w.label, routine_id: w.routine_id };
+  }
+  const workouts = Object.fromEntries(
+    db.prepare('SELECT date, COUNT(*) c FROM workouts WHERE date >= ? AND date <= ? GROUP BY date')
+      .all(from, to).map((r) => [r.date, r.c])
+  );
+  res.json({ from, to, days, weekly, workouts });
+});
+
+api.put('/schedule/day', (req, res) => {
+  const { date, kind, label, routine_id } = req.body || {};
+  if (!isDate(date) || !['workout', 'rest'].includes(kind)) return bad(res, 'Bad schedule entry.');
+  db.prepare(
+    `INSERT INTO schedule_days (date, kind, label, routine_id, created_at) VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT(date) DO UPDATE SET kind = excluded.kind, label = excluded.label, routine_id = excluded.routine_id`
+  ).run(date, kind, label ? String(label).slice(0, 80) : null, routine_id ? num(routine_id) : null, now());
+  res.json({ day: effectiveScheduleFor(date) });
+});
+
+api.delete('/schedule/day', (req, res) => {
+  if (!isDate(req.query.date)) return bad(res, 'Bad date.');
+  db.prepare('DELETE FROM schedule_days WHERE date = ?').run(req.query.date);
+  res.json({ day: effectiveScheduleFor(req.query.date) });
+});
+
+api.put('/schedule/weekly', (req, res) => {
+  const { dow, kind, label, routine_id } = req.body || {};
+  const d = num(dow, -1);
+  if (!(d >= 0 && d <= 6) || !['workout', 'rest'].includes(kind)) return bad(res, 'Bad weekly entry.');
+  db.prepare(
+    `INSERT INTO schedule_weekly (dow, kind, label, routine_id, created_at) VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT(dow) DO UPDATE SET kind = excluded.kind, label = excluded.label, routine_id = excluded.routine_id`
+  ).run(d, kind, label ? String(label).slice(0, 80) : null, routine_id ? num(routine_id) : null, now());
+  res.json({ ok: true });
+});
+
+api.delete('/schedule/weekly', (req, res) => {
+  const d = num(req.query.dow, -1);
+  if (!(d >= 0 && d <= 6)) return bad(res, 'Bad day of week.');
+  db.prepare('DELETE FROM schedule_weekly WHERE dow = ?').run(d);
   res.json({ ok: true });
 });
 

@@ -147,6 +147,22 @@ db.exec(`
     created_at TEXT NOT NULL,
     PRIMARY KEY (muscle, week)
   );
+
+  CREATE TABLE IF NOT EXISTS schedule_days (
+    date TEXT PRIMARY KEY,
+    kind TEXT NOT NULL,
+    label TEXT,
+    routine_id INTEGER,
+    created_at TEXT NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS schedule_weekly (
+    dow INTEGER PRIMARY KEY,
+    kind TEXT NOT NULL,
+    label TEXT,
+    routine_id INTEGER,
+    created_at TEXT NOT NULL
+  );
 `);
 
 export const now = () => new Date().toISOString();

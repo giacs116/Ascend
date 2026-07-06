@@ -4,6 +4,7 @@ import { h, todayStr, fmtDay, fmtInt, fmtClock, fmtElapsed, wDisp, wUnit, wParse
 import { api } from '../api.js';
 import { ico, toast, sheet, confirmSheet, confetti, emptyState, spinner, stepperInput } from '../ui.js';
 import { buildBodySvg } from '../body-svg.js';
+import { renderScheduleSection } from './schedule.js';
 import { App } from '../main.js';
 
 const ACTIVE_KEY = 'ascend_active_wo';
@@ -34,10 +35,10 @@ export async function renderTrain(root) {
     h('button', { class: 'qa qa--violet', onclick: () => App.go('#/formcheck') }, h('span', { class: 'qa-ico' }, ico('video')), 'Form check'),
   ));
 
-  let routines = { routines: [] }, prs = { prs: [] }, history = { workouts: [] }, muscles = null;
+  let prs = { prs: [] }, history = { workouts: [] }, muscles = null;
   try {
-    [routines, prs, history, muscles] = await Promise.all([
-      api('/routines'), api('/prs'), api('/workouts?limit=12'), api(`/muscles?today=${todayStr()}`),
+    [prs, history, muscles] = await Promise.all([
+      api('/prs'), api('/workouts?limit=12'), api(`/muscles?today=${todayStr()}`),
     ]);
   } catch (e) { toast(e.message, 'bad'); }
 
@@ -59,24 +60,8 @@ export async function renderTrain(root) {
         buildBodySvg('back', statusFor, { mini: true }))));
   }
 
-  // Routines
-  view.append(h('div', { class: 'section-label' }, 'My plans',
-    h('button', { class: 'lnk', style: { color: 'var(--accent)', fontWeight: 600 }, onclick: () => openRoutineBuilder(null, () => renderTrain(root)) }, '+ New plan')));
-  const rWrap = h('div', { class: 'card card--flush' });
-  if (!routines.routines.length) {
-    rWrap.append(h('div', { class: 'row' }, h('div', { class: 'grow s' }, 'No plans yet — build one with “+ New plan”.')));
-  }
-  for (const r of routines.routines) {
-    rWrap.append(h('div', { class: 'row', style: { padding: '9px 10px 9px 16px' } },
-      h('button', { class: 'flex grow', style: { gap: '12px', textAlign: 'left', minWidth: 0 }, onclick: () => startWorkout({ routine: r }) },
-        h('div', { class: 'row-ico', style: { background: 'var(--accent-soft)', color: 'var(--accent)', flexShrink: 0 } }, ico('repeat')),
-        h('div', { class: 'grow', style: { minWidth: 0 } },
-          h('div', { class: 't' }, r.name),
-          h('div', { class: 's', style: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, r.items.map((i) => i.name).join(' · ')))),
-      h('button', { class: 'btn btn--icon', style: { width: '38px', height: '38px', flexShrink: 0 }, onclick: () => openRoutineBuilder(r, () => renderTrain(root)) }, ico('edit', 16)),
-      h('button', { class: 'btn btn--icon', style: { width: '38px', height: '38px', flexShrink: 0 }, onclick: () => startWorkout({ routine: r }) }, ico('play', 16))));
-  }
-  view.append(rWrap);
+  // Workout schedule calendar (plans are managed from inside it)
+  renderScheduleSection(view);
 
   // PRs
   if (prs.prs.length) {
@@ -400,7 +385,7 @@ function openWorkoutDetail(id, onChange) {
 }
 
 // ── Routine builder (create / edit your own plan) ────────────
-function openRoutineBuilder(routine, onDone) {
+export function openRoutineBuilder(routine, onDone) {
   const items = routine ? routine.items.map((i) => ({ ...i })) : [];
   sheet({
     title: routine ? 'Edit plan' : 'New workout plan',
@@ -446,11 +431,13 @@ function openRoutineBuilder(routine, onDone) {
           toast(routine ? 'Plan updated' : 'Plan created 💪', 'good');
           close(); onDone?.();
         } }, routine ? 'Save changes' : 'Create plan'),
-        routine ? h('button', { class: 'btn btn--danger btn--block mt-8', onclick: async () => {
+      );
+      if (routine) {
+        body.append(h('button', { class: 'btn btn--danger btn--block mt-8', onclick: async () => {
           const ok = await confirmSheet({ title: `Delete “${routine.name}”?`, confirmLabel: 'Delete plan', danger: true });
           if (ok) { await api(`/routines/${routine.id}`, { method: 'DELETE' }); close(); onDone?.(); toast('Plan deleted'); }
-        } }, 'Delete plan') : null,
-      );
+        } }, 'Delete plan'));
+      }
     },
   });
 }

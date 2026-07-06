@@ -705,6 +705,34 @@ textarea.input { min-height: 92px; resize: vertical; }
   font-variant-numeric: tabular-nums; white-space: nowrap;
 }
 
+/* ═══ Schedule calendar ═══════════════════════════════════── */
+.cal-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+.cal-title { font-size: 15.5px; font-weight: 800; letter-spacing: -0.01em; }
+.cal-dow { display: grid; grid-template-columns: repeat(7, 1fr); margin-bottom: 6px; }
+.cal-dow span { text-align: center; font-size: 10.5px; font-weight: 750; color: var(--text-3); letter-spacing: 0.04em; }
+.cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
+.cal-cell {
+  aspect-ratio: 1 / 1.12;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px;
+  background: var(--surface-2); border: 1.5px solid transparent; border-radius: 11px;
+  font-size: 13px; font-weight: 650; color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+  transition: transform 0.1s ease;
+}
+.cal-cell:active { transform: scale(0.92); }
+.cal-cell.other { opacity: 0.32; background: transparent; }
+.cal-cell.today { border-color: var(--accent); color: var(--text); }
+.cal-mark { height: 13px; display: flex; align-items: center; justify-content: center; }
+.cal-dot { width: 6px; height: 6px; border-radius: 3px; display: inline-block; }
+.cal-dot.planned { background: var(--accent); }
+[data-theme="light"] .cal-dot.planned { background: var(--c-accent); }
+.cal-dot.missed { background: var(--c-fat); opacity: 0.75; }
+.cal-check { color: var(--accent); display: inline-flex; }
+[data-theme="light"] .cal-check { color: var(--c-accent); }
+.cal-rest { color: var(--text-3); display: inline-flex; }
+.cal-legend { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 12px; }
+.cal-legend .lg { display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--text-3); font-weight: 650; }
+
 /* ═══ Routine builder ═════════════════════════════════════── */
 .rb-row {
   display: flex; gap: 10px; align-items: center;
