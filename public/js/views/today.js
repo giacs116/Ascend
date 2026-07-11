@@ -1,5 +1,5 @@
 // Today: rings, macros, water, quick actions, meals, workout, weight.
-import { h, todayStr, fmtDay, fmtInt, cssVar, wDisp, wUnit, wParse, waterDisp, waterUnit, waterSteps, vibrate, round1 } from '../util.js';
+import { h, todayStr, fmtDay, fmtInt, cssVar, wDisp, wUnit, wParse, waterDisp, waterUnit, waterSteps, vibrate, round1, ML_OZ } from '../util.js';
 import { api } from '../api.js';
 import { ico, toast, sheet, stepperInput } from '../ui.js';
 import { ringMeter, sparkline } from '../charts.js';
@@ -110,6 +110,28 @@ export async function renderToday(root) {
               if (r.summary.water_ml >= (t.water_ml || Infinity) && summary.water_ml < t.water_ml) toast('Hydration goal hit 💧', 'good');
             },
           }, st.label)),
+          h('button', { class: 'btn btn--soft btn--sm', onclick: () => {
+            const isMl = waterUnit() === 'ml';
+            sheet({
+              title: 'Log water',
+              build: (body, { close }) => {
+                const st = stepperInput({ value: isMl ? 300 : 12, step: isMl ? 50 : 1, min: 1, max: isMl ? 3000 : 101, decimals: 0 });
+                body.append(
+                  h('div', { class: 'field' }, h('label', {}, `Amount (${waterUnit()})`), st),
+                  h('button', { class: 'btn btn--primary btn--block mt-14', onclick: async () => {
+                    const v = st.getValue();
+                    if (!(v > 0)) return;
+                    vibrate(8);
+                    const ml = isMl ? Math.round(v) : Math.round(v * ML_OZ);
+                    const before = summary.water_ml;
+                    const r = await api('/water', { method: 'POST', body: { date, ml } });
+                    close();
+                    renderWater(r.summary);
+                    if (r.summary.water_ml >= (t.water_ml || Infinity) && before < t.water_ml) toast('Hydration goal hit 💧', 'good');
+                  } }, 'Add'));
+              },
+            });
+          } }, 'Custom…'),
           h('button', { class: 'btn btn--icon', title: 'Undo', onclick: async () => {
             const r = await api(`/water/last?date=${date}`, { method: 'DELETE' });
             renderWater(r.summary);

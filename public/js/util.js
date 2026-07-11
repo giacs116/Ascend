@@ -65,6 +65,7 @@ export function fmtClock(totalSec) {
   return `${m}:${String(s).padStart(2, '0')}`;
 }
 export function fmtElapsed(totalSec) {
+  totalSec = Math.max(0, totalSec || 0); // clock skew must never show negative time
   const hh = Math.floor(totalSec / 3600);
   const mm = Math.floor((totalSec % 3600) / 60);
   const ss = Math.floor(totalSec % 60);

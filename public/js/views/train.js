@@ -102,7 +102,9 @@ export async function renderTrain(root) {
 export async function startWorkout({ routine } = {}) {
   if (activeWorkoutId()) { App.go('#/workout'); return; }
   try {
-    const r = await api('/workouts', { method: 'POST', body: { date: todayStr(), name: routine?.name || null, type: 'strength' } });
+    // started_at comes from THIS device's clock — the timer is measured against it,
+    // so a server clock that differs by minutes must not set the start time.
+    const r = await api('/workouts', { method: 'POST', body: { date: todayStr(), name: routine?.name || null, type: 'strength', started_at: new Date().toISOString() } });
     localStorage.setItem(ACTIVE_KEY, String(r.id));
     localStorage.setItem(PENDING_KEY, JSON.stringify(routine ? routine.items.map((i) => ({ id: i.exercise_id, name: i.name, target: `${i.target_sets}×${i.target_reps}` })) : []));
     App.go('#/workout');
@@ -136,18 +138,31 @@ export async function renderWorkout(root) {
 
   // Sticky bar
   const elapsedEl = h('span', { class: 'elapsed' }, '0:00');
-  const timerInt = setInterval(() => {
-    if (!document.body.contains(elapsedEl)) return clearInterval(timerInt);
-    elapsedEl.textContent = fmtElapsed((Date.now() - startedAt) / 1000);
-  }, 1000);
   view.append(h('div', { class: 'wo-live-bar' },
-    h('button', { class: 'btn btn--icon', onclick: async () => {
-      const ok = await confirmSheet({ title: 'Discard workout?', message: 'This deletes the session and its sets.', confirmLabel: 'Discard', danger: true });
-      if (ok) { await api(`/workouts/${id}`, { method: 'DELETE' }); cleanup(); App.go('#/train'); }
-    } }, ico('trash')),
+    h('button', { class: 'btn btn--ghost btn--sm', onclick: async () => {
+      const setCount = blocks.reduce((a, b) => a + b.sets.length, 0);
+      // Nothing logged yet → cancel silently; only ask when real sets would be lost.
+      if (setCount > 0) {
+        const ok = await confirmSheet({ title: 'Cancel workout?', message: `This deletes the session and its ${setCount} logged set${setCount > 1 ? 's' : ''}.`, confirmLabel: 'Cancel workout', danger: true });
+        if (!ok) return;
+      }
+      await api(`/workouts/${id}`, { method: 'DELETE' });
+      cleanup();
+      toast('Workout cancelled — nothing was logged');
+      App.go('#/train');
+    } }, ico('x', 14), 'Cancel'),
     h('div', { class: 't' }, data.workout.name || 'Workout'),
     elapsedEl,
     h('button', { class: 'btn btn--primary btn--sm', onclick: finish }, 'Finish')));
+
+  // Start the ticking clock only AFTER elapsedEl is in the DOM. (Ticking before it's
+  // attached makes the in-DOM guard fire and clear the interval — that froze it at 0:00.)
+  const tick = () => {
+    if (!document.body.contains(elapsedEl)) return clearInterval(timerInt);
+    elapsedEl.textContent = fmtElapsed((Date.now() - startedAt) / 1000);
+  };
+  const timerInt = setInterval(tick, 1000);
+  tick(); // paint the real elapsed immediately, not after a 1s delay
 
   const blocksWrap = h('div', {});
   view.append(blocksWrap);
@@ -200,25 +215,53 @@ export async function renderWorkout(root) {
     for (const b of blocks) blocksWrap.append(renderBlock(b));
   }
 
+  // Remove an exercise (and any sets logged under it) from this workout.
+  async function removeBlock(b) {
+    if (b.sets.length) {
+      const ok = await confirmSheet({ title: `Remove ${b.name}?`, message: `This deletes its ${b.sets.length} logged set${b.sets.length > 1 ? 's' : ''}.`, confirmLabel: 'Remove exercise', danger: true });
+      if (!ok) return;
+    }
+    for (const s of b.sets) { if (s.id) { try { await api(`/sets/${s.id}`, { method: 'DELETE' }); } catch { /* already gone */ } } }
+    const idx = blocks.indexOf(b);
+    if (idx >= 0) blocks.splice(idx, 1);
+    // Also drop it from the routine's planned list so it doesn't come back on reload.
+    const pending = JSON.parse(localStorage.getItem(PENDING_KEY) || '[]').filter((p) => p.id !== b.id);
+    localStorage.setItem(PENDING_KEY, JSON.stringify(pending));
+    vibrate(8);
+    renderBlocks();
+  }
+
+  // Remove a single logged set (for the odd fat-fingered entry).
+  async function removeSet(b, s) {
+    const idx = b.sets.indexOf(s);
+    if (idx < 0) return;
+    if (s.id) { try { await api(`/sets/${s.id}`, { method: 'DELETE' }); } catch (e) { return toast(e.message, 'bad'); } }
+    b.sets.splice(idx, 1);
+    if (s._pr && prCount > 0) prCount--;
+    vibrate(8);
+    renderBlocks();
+  }
+
   function renderBlock(b) {
     const isCardio = b.category === 'cardio' || b.category === 'sport' || b.category === 'mobility';
     const card = h('div', { class: 'card ex-block' });
     card.append(h('div', { class: 'exb-head' },
-      h('div', {}, h('div', { class: 'exb-name' }, b.name), b.target ? h('div', { class: 'exb-sub' }, `target ${b.target}`) : null),
-      h('div', { class: 'exb-sub' }, b.sets.length ? `${b.sets.length} set${b.sets.length > 1 ? 's' : ''}` : '')));
+      h('div', { class: 'grow' }, h('div', { class: 'exb-name' }, b.name), b.target ? h('div', { class: 'exb-sub' }, `target ${b.target}`) : null),
+      h('div', { class: 'exb-sub' }, b.sets.length ? `${b.sets.length} set${b.sets.length > 1 ? 's' : ''}` : ''),
+      h('button', { class: 'btn btn--icon exb-remove', title: 'Remove exercise', onclick: () => removeBlock(b) }, ico('trash', 16))));
     card.append(h('div', { class: 'set-cols' },
       h('span', {}, 'Set'),
       h('span', {}, isCardio ? 'Min' : wUnit()),
       h('span', {}, isCardio ? (wUnit() === 'kg' ? 'Km' : 'Mi') : 'Reps'),
       h('span', {}, '✓')));
 
-    // logged sets (read-only rows)
+    // logged sets (read-only rows) — tap the ✓ to remove a mis-logged set
     b.sets.forEach((s, i) => {
       card.append(h('div', { class: 'set-row' },
         h('div', { class: `sn${s._pr ? ' pr' : ''}` }, s._pr ? '★' : String(i + 1)),
         h('input', { value: isCardio ? (s.duration_sec ? String(Math.round(s.duration_sec / 60)) : '—') : String(wDisp(s.weight_kg ?? 0)), disabled: true }),
         h('input', { value: isCardio ? (s.distance_m ? String(round1(s.distance_m / (wUnit() === 'kg' ? 1000 : 1609.34))) : '—') : String(s.reps ?? 0), disabled: true }),
-        h('div', { class: 'done-btn on' }, ico('check'))));
+        h('button', { class: 'done-btn on done-btn--logged', title: 'Remove this set', onclick: () => removeSet(b, s) }, ico('check'))));
     });
 
     // entry row

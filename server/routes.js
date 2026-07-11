@@ -14,6 +14,12 @@ const isDate = (s) => typeof s === 'string' && DATE_RE.test(s);
 const num = (v, fallback = 0) => (Number.isFinite(+v) ? +v : fallback);
 const bad = (res, message) => res.status(400).json({ error: message });
 
+// A workout only counts once something real happened in it: it was finished, has a
+// duration (quick logs), or has at least one set. A session someone started and
+// abandoned ("paused") must never show up as a logged workout. Requires alias `w`.
+const REAL_WORKOUT =
+  '(w.ended_at IS NOT NULL OR w.duration_min IS NOT NULL OR EXISTS (SELECT 1 FROM sets s WHERE s.workout_id = w.id))';
+
 function settingsPayload() {
   return {
     weight_unit: getSetting('weight_unit') || 'lb',
@@ -39,7 +45,7 @@ function daySummary(date) {
      FROM food_entries WHERE date = ?`
   ).get(date);
   const water = db.prepare('SELECT COALESCE(SUM(ml),0) ml FROM water_log WHERE date = ?').get(date).ml;
-  const workouts = db.prepare('SELECT COUNT(*) c FROM workouts WHERE date = ?').get(date).c;
+  const workouts = db.prepare(`SELECT COUNT(*) c FROM workouts w WHERE w.date = ? AND ${REAL_WORKOUT}`).get(date).c;
   return { ...f, water_ml: water, workouts };
 }
 
@@ -47,7 +53,8 @@ function activeDates(limit = 500) {
   const rows = db.prepare(
     `SELECT DISTINCT date FROM (
        SELECT date FROM food_entries UNION SELECT date FROM water_log
-       UNION SELECT date FROM workouts UNION SELECT date FROM weight_log
+       UNION SELECT date FROM workouts w WHERE ${REAL_WORKOUT}
+       UNION SELECT date FROM weight_log
      ) ORDER BY date DESC LIMIT ?`
   ).all(limit);
   return new Set(rows.map((r) => r.date));
@@ -84,7 +91,7 @@ api.get('/bootstrap', (req, res) => {
     today: profile ? daySummary(today) : null,
     streak: profile ? computeStreak(today) : 0,
     workoutsThisWeek: profile
-      ? db.prepare('SELECT COUNT(*) c FROM workouts WHERE date > ? AND date <= ?').get(shiftDate(today, -7), today).c
+      ? db.prepare(`SELECT COUNT(*) c FROM workouts w WHERE w.date > ? AND w.date <= ? AND ${REAL_WORKOUT}`).get(shiftDate(today, -7), today).c
       : 0,
     schedule_today: profile ? effectiveScheduleFor(today) : null,
   });
@@ -173,7 +180,7 @@ api.get('/day/:date', (req, res) => {
   if (!isDate(date)) return bad(res, 'Bad date.');
   const entries = db.prepare('SELECT * FROM food_entries WHERE date = ? ORDER BY id').all(date);
   const waterRows = db.prepare('SELECT * FROM water_log WHERE date = ? ORDER BY id').all(date);
-  const workouts = db.prepare('SELECT * FROM workouts WHERE date = ? ORDER BY id').all(date);
+  const workouts = db.prepare(`SELECT * FROM workouts w WHERE w.date = ? AND ${REAL_WORKOUT} ORDER BY w.id`).all(date);
   const weight = db.prepare('SELECT * FROM weight_log WHERE date = ?').get(date) ?? null;
   res.json({ date, entries, water: waterRows, workouts, weight, summary: daySummary(date), targets: targetsPayload() });
 });
@@ -316,7 +323,7 @@ const workoutAgg = (id) => ({
 api.get('/workouts', (req, res) => {
   const limit = Math.min(num(req.query.limit, 20), 100);
   const offset = num(req.query.offset, 0);
-  const rows = db.prepare('SELECT * FROM workouts ORDER BY date DESC, id DESC LIMIT ? OFFSET ?').all(limit, offset);
+  const rows = db.prepare(`SELECT * FROM workouts w WHERE ${REAL_WORKOUT} ORDER BY w.date DESC, w.id DESC LIMIT ? OFFSET ?`).all(limit, offset);
   res.json({ workouts: rows.map((w) => ({ ...w, ...workoutAgg(w.id) })) });
 });
 
@@ -460,7 +467,7 @@ api.get('/schedule', (req, res) => {
     weekly[w.dow] = { kind: w.kind, label: w.label, routine_id: w.routine_id };
   }
   const workouts = Object.fromEntries(
-    db.prepare('SELECT date, COUNT(*) c FROM workouts WHERE date >= ? AND date <= ? GROUP BY date')
+    db.prepare(`SELECT w.date, COUNT(*) c FROM workouts w WHERE w.date >= ? AND w.date <= ? AND ${REAL_WORKOUT} GROUP BY w.date`)
       .all(from, to).map((r) => [r.date, r.c])
   );
   res.json({ from, to, days, weekly, workouts });
@@ -527,8 +534,8 @@ api.get('/muscles', (req, res) => {
     }
   }
   const cw = db.prepare(
-    `SELECT COUNT(*) AS c, COALESCE(SUM(COALESCE(duration_min, 0)), 0) AS m FROM workouts
-     WHERE date >= ? AND date <= ? AND type IN ('cardio', 'sport', 'mobility')`
+    `SELECT COUNT(*) AS c, COALESCE(SUM(COALESCE(w.duration_min, 0)), 0) AS m FROM workouts w
+     WHERE w.date >= ? AND w.date <= ? AND w.type IN ('cardio', 'sport', 'mobility') AND ${REAL_WORKOUT}`
   ).get(start, end);
   cardio = { sessions: cw.c, minutes: Math.round(cw.m) };
   res.json({ week_start: start, week_end: end, muscles, cardio });
@@ -584,7 +591,7 @@ api.get('/stats', (req, res) => {
   const workoutRows = db.prepare(
     `SELECT w.date, COUNT(*) c,
             COALESCE(SUM((SELECT SUM(s.reps * s.weight_kg) FROM sets s WHERE s.workout_id = w.id AND s.reps IS NOT NULL AND s.weight_kg IS NOT NULL)), 0) volume
-     FROM workouts w WHERE w.date >= ? AND w.date <= ? GROUP BY w.date`
+     FROM workouts w WHERE w.date >= ? AND w.date <= ? AND ${REAL_WORKOUT} GROUP BY w.date`
   ).all(start, today);
 
   const byDate = (rows) => Object.fromEntries(rows.map((r) => [r.date, r]));

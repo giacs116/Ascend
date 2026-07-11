@@ -133,9 +133,13 @@ a { color: var(--accent); text-decoration: none; }
 .section-label {
   font-size: 12px; font-weight: 700; letter-spacing: 0.09em; text-transform: uppercase;
   color: var(--text-3); margin: 22px 2px 10px;
-  display: flex; align-items: center; justify-content: space-between;
+  display: block; /* title on its own line; action buttons stack below (see .lnk rule) */
 }
-.section-label .lnk { font-size: 12px; letter-spacing: 0; text-transform: none; font-weight: 600; }
+.section-label .lnk {
+  display: block; width: fit-content; margin-top: 6px;
+  font-size: 12px; letter-spacing: 0; text-transform: none; font-weight: 600;
+}
+.section-label .ai-badge { margin-left: 8px; }
 
 /* ── Bottom nav ───────────────────────────────────────────── */
 .bottomnav {
@@ -458,6 +462,10 @@ textarea.input { min-height: 92px; resize: vertical; }
 }
 .set-row .done-btn.on { background: var(--accent); color: var(--ink-on-accent); border-color: transparent; }
 .set-row .done-btn svg { width: 20px; height: 20px; }
+/* A logged ✓ is tappable to delete that set: on press it flips to a red ✕ affordance. */
+.set-row .done-btn--logged:active { background: var(--danger); }
+.ex-block .exb-remove { width: 34px; height: 34px; color: var(--text-3); flex-shrink: 0; }
+.ex-block .exb-remove:active { color: var(--danger); }
 .set-cols { display: grid; grid-template-columns: 34px 1fr 1fr 46px; gap: 9px; padding: 2px 0 4px; font-size: 10.5px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-3); text-align: center; }
 
 .rest-pill {
@@ -814,12 +822,11 @@ textarea.input { min-height: 92px; resize: vertical; }
 }
 
 .section-label::before {
-  content: ''; width: 14px; height: 3.5px; border-radius: 2px; margin-right: 8px;
+  content: ''; display: inline-block; width: 14px; height: 3.5px; border-radius: 2px;
+  margin-right: 8px; vertical-align: 2px;
   background: linear-gradient(90deg, var(--accent), color-mix(in srgb, var(--accent) 20%, transparent));
 }
 [data-theme="light"] .section-label::before { background: linear-gradient(90deg, var(--c-accent), color-mix(in srgb, var(--c-accent) 20%, transparent)); }
-.section-label { justify-content: flex-start; }
-.section-label > :last-child:not(:first-child) { margin-left: auto; }
 
 .bubble.coach {
   background: linear-gradient(135deg, color-mix(in srgb, var(--violet) 10%, var(--surface-2)), var(--surface-2) 60%);
