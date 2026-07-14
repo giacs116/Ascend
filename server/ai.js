@@ -33,39 +33,39 @@ function keyFromEnvFile() {
   }
 }
 
-function getApiKey() {
-  return keyFromEnvFile() || process.env.ANTHROPIC_API_KEY || getSetting('api_key') || null;
+async function getApiKey() {
+  return keyFromEnvFile() || process.env.ANTHROPIC_API_KEY || (await getSetting('api_key')) || null;
 }
 
-export function aiStatus() {
-  const key = getApiKey();
-  const usage = JSON.parse(getSetting('ai_usage') || '{"requests":0,"input":0,"output":0}');
+export async function aiStatus() {
+  const key = await getApiKey();
+  const usage = JSON.parse((await getSetting('ai_usage')) || '{"requests":0,"input":0,"output":0}');
   return {
     hasKey: !!key,
     last4: key ? key.slice(-4) : null,
     fromEnv: !!(keyFromEnvFile() || process.env.ANTHROPIC_API_KEY),
-    model: getSetting('ai_model') || DEFAULT_MODEL,
+    model: (await getSetting('ai_model')) || DEFAULT_MODEL,
     usage,
   };
 }
 
-function client() {
-  const key = getApiKey();
+async function client() {
+  const key = await getApiKey();
   if (!key) throw new NoKeyError();
   return new Anthropic({ apiKey: key });
 }
 
-function model() {
-  return getSetting('ai_model') || DEFAULT_MODEL;
+async function model() {
+  return (await getSetting('ai_model')) || DEFAULT_MODEL;
 }
 
-function trackUsage(usage) {
+async function trackUsage(usage) {
   if (!usage) return;
-  const u = JSON.parse(getSetting('ai_usage') || '{"requests":0,"input":0,"output":0}');
+  const u = JSON.parse((await getSetting('ai_usage')) || '{"requests":0,"input":0,"output":0}');
   u.requests += 1;
   u.input += usage.input_tokens || 0;
   u.output += usage.output_tokens || 0;
-  setSetting('ai_usage', JSON.stringify(u));
+  await setSetting('ai_usage', JSON.stringify(u));
 }
 
 // Friendly, actionable error mapping for the UI
@@ -101,13 +101,13 @@ export function mapAiError(e) {
 const KG_TO_LB = 2.2046226218;
 const fmtLb = (kg) => `${Math.round(kg * KG_TO_LB * 10) / 10} lb`;
 
-function coachContext(today) {
-  const profile = getProfile();
+async function coachContext(today) {
+  const profile = await getProfile();
   if (!profile) return 'The user has not completed onboarding yet.';
-  const w = latestWeight();
+  const w = await latestWeight();
   const weightKg = w?.weight_kg ?? 70;
-  const t = computeTargetsWithOverride(profile, weightKg);
-  const weightUnit = getSetting('weight_unit') || 'lb';
+  const t = await computeTargetsWithOverride(profile, weightKg);
+  const weightUnit = (await getSetting('weight_unit')) || 'lb';
   const showW = (kg) => (weightUnit === 'kg' ? `${Math.round(kg * 10) / 10} kg` : fmtLb(kg));
 
   const lines = [];
@@ -125,24 +125,24 @@ function coachContext(today) {
   );
 
   // Today so far
-  const foods = db.prepare(
+  const foods = await db.prepare(
     `SELECT COALESCE(SUM(calories),0) cal, COALESCE(SUM(protein_g),0) p, COALESCE(SUM(carbs_g),0) c,
             COALESCE(SUM(fat_g),0) f, COALESCE(SUM(sugar_g),0) s, COUNT(*) n
      FROM food_entries WHERE date = ?`
   ).get(today);
-  const water = db.prepare('SELECT COALESCE(SUM(ml),0) ml FROM water_log WHERE date = ?').get(today);
+  const water = await db.prepare('SELECT COALESCE(SUM(ml),0) ml FROM water_log WHERE date = ?').get(today);
   lines.push(`## Today (${today}) so far`);
   lines.push(
     `Eaten: ${Math.round(foods.cal)} kcal, ${Math.round(foods.p)} g protein, ${Math.round(foods.c)} g carbs, ` +
     `${Math.round(foods.f)} g fat, ${Math.round(foods.s)} g sugar across ${foods.n} entries · Water: ${water.ml} ml`
   );
-  const todayMeals = db.prepare('SELECT meal, name, calories, protein_g FROM food_entries WHERE date = ? ORDER BY id').all(today);
+  const todayMeals = await db.prepare('SELECT meal, name, calories, protein_g FROM food_entries WHERE date = ? ORDER BY id').all(today);
   if (todayMeals.length) {
     lines.push('Logged: ' + todayMeals.map((m) => `${m.name} (${m.meal}, ${Math.round(m.calories)} kcal/${Math.round(m.protein_g)}g P)`).join('; '));
   }
 
   // Last 7 days averages
-  const week = db.prepare(
+  const week = await db.prepare(
     `SELECT COUNT(DISTINCT date) days, COALESCE(SUM(calories),0) cal, COALESCE(SUM(protein_g),0) p
      FROM food_entries WHERE date < ? AND date >= date(?, '-7 days')`
   ).get(today, today);
@@ -152,7 +152,7 @@ function coachContext(today) {
   }
 
   // Recent workouts
-  const workouts = db.prepare(
+  const workouts = await db.prepare(
     `SELECT w.id, w.date, w.name, w.type, w.duration_min,
             (SELECT COUNT(*) FROM sets s WHERE s.workout_id = w.id) set_count,
             (SELECT COALESCE(SUM(s.reps * s.weight_kg),0) FROM sets s WHERE s.workout_id = w.id) volume
@@ -170,7 +170,7 @@ function coachContext(today) {
   }
 
   // Top lifts (est 1RM)
-  const prRows = db.prepare(
+  const prRows = await db.prepare(
     `SELECT e.name, s.weight_kg, s.reps FROM sets s JOIN exercises e ON e.id = s.exercise_id
      WHERE s.weight_kg IS NOT NULL AND s.reps IS NOT NULL`
   ).all();
@@ -187,7 +187,7 @@ function coachContext(today) {
   }
 
   // Weight trend
-  const weights = db.prepare('SELECT date, weight_kg FROM weight_log ORDER BY date DESC LIMIT 30').all();
+  const weights = await db.prepare('SELECT date, weight_kg FROM weight_log ORDER BY date DESC LIMIT 30').all();
   if (weights.length >= 2) {
     const newest = weights[0], oldest = weights[weights.length - 1];
     const diff = newest.weight_kg - oldest.weight_kg;
@@ -198,9 +198,9 @@ function coachContext(today) {
   return lines.join('\n');
 }
 
-export function computeTargetsWithOverride(profile, weightKg) {
+export async function computeTargetsWithOverride(profile, weightKg) {
   const auto = computeTargets(profile, weightKg);
-  const override = getSetting('targets_override');
+  const override = await getSetting('targets_override');
   if (!override) return { ...auto, custom: false };
   try {
     return { ...auto, ...JSON.parse(override), custom: true };
@@ -221,31 +221,26 @@ Style:
 - You are not a doctor. For pain, injury, or medical conditions, give sensible general guidance and recommend a professional when it matters. Never guilt-trip; never encourage under-eating below their targets.`;
 
 export async function streamChat({ message, today, res }) {
-  const c = client();
-  const history = db.prepare('SELECT role, content FROM chat_messages ORDER BY id DESC LIMIT 24').all().reverse();
+  const c = await client();
+  const history = (await db.prepare('SELECT role, content FROM chat_messages ORDER BY id DESC LIMIT 24').all()).reverse();
   const messages = [...history.map((m) => ({ role: m.role, content: m.content })), { role: 'user', content: message }];
+  const system = `${COACH_SYSTEM}\n\n# Athlete data (live from the app)\n${await coachContext(today)}`;
+  const mdl = await model();
 
-  db.prepare('INSERT INTO chat_messages (role, content, created_at) VALUES (?, ?, ?)').run('user', message, now());
+  await db.prepare('INSERT INTO chat_messages (role, content, created_at) VALUES (?, ?, ?)').run('user', message, now());
 
   const send = (obj) => res.write(`data: ${JSON.stringify(obj)}\n\n`);
 
-  const stream = c.messages.stream({
-    model: model(),
-    max_tokens: 16000,
-    thinking: { type: 'adaptive' },
-    system: `${COACH_SYSTEM}\n\n# Athlete data (live from the app)\n${coachContext(today)}`,
-    messages,
-  });
-
+  const stream = c.messages.stream({ model: mdl, max_tokens: 16000, thinking: { type: 'adaptive' }, system, messages });
   stream.on('text', (delta) => send({ type: 'delta', text: delta }));
 
   const final = await stream.finalMessage();
-  trackUsage(final.usage);
+  await trackUsage(final.usage);
   const text = final.content.filter((b) => b.type === 'text').map((b) => b.text).join('');
   if (final.stop_reason === 'refusal') {
     send({ type: 'error', message: 'The coach declined to answer that one.' });
   } else {
-    db.prepare('INSERT INTO chat_messages (role, content, created_at) VALUES (?, ?, ?)').run('assistant', text, now());
+    await db.prepare('INSERT INTO chat_messages (role, content, created_at) VALUES (?, ?, ?)').run('assistant', text, now());
   }
   send({ type: 'done' });
 }
@@ -258,16 +253,16 @@ function dataUrlToImageBlock(dataUrl) {
 }
 
 async function structuredRequest({ content, system, schema, maxTokens }) {
-  const c = client();
+  const c = await client();
   const resp = await c.messages.create({
-    model: model(),
+    model: await model(),
     max_tokens: maxTokens,
     thinking: { type: 'adaptive' },
     system,
     output_config: { format: { type: 'json_schema', schema } },
     messages: [{ role: 'user', content }],
   });
-  trackUsage(resp.usage);
+  await trackUsage(resp.usage);
   if (resp.stop_reason === 'refusal') throw new Error('The AI declined this request.');
   if (resp.stop_reason === 'max_tokens') throw new Error('The AI response was cut short — try again.');
   const text = resp.content.filter((b) => b.type === 'text').map((b) => b.text).join('');
@@ -375,10 +370,10 @@ export async function formCheck({ exercise, notes, frames, isVideo, date }) {
   });
 
   const thumb = (frames && frames[0] && frames[0].length < 200_000) ? frames[0] : null;
-  const saved = db.prepare(
+  const saved = await db.prepare(
     'INSERT INTO form_checks (date, exercise, score, summary, feedback, thumb, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
   ).run(date, result.exercise_detected || exercise, result.score, result.summary, JSON.stringify(result), thumb, now());
-  return { id: Number(saved.lastInsertRowid), ...result };
+  return { id: saved.lastInsertRowid, ...result };
 }
 
 const MUSCLE_RECS_SCHEMA = {
@@ -404,13 +399,13 @@ const MUSCLE_RECS_SCHEMA = {
 };
 
 export async function muscleRecs({ muscle, today }) {
-  const profile = getProfile();
-  const library = db.prepare('SELECT name, equipment, category FROM exercises WHERE muscle = ?').all(muscle);
-  const recentEquip = db.prepare(
+  const profile = await getProfile();
+  const library = await db.prepare('SELECT name, equipment, category FROM exercises WHERE muscle = ?').all(muscle);
+  const recentEquip = (await db.prepare(
     `SELECT DISTINCT e.equipment FROM sets s JOIN exercises e ON e.id = s.exercise_id
      JOIN workouts w ON w.id = s.workout_id WHERE w.date >= date(?, '-60 days') AND e.equipment IS NOT NULL`
-  ).all(today).map((r) => r.equipment);
-  const recentForMuscle = db.prepare(
+  ).all(today)).map((r) => r.equipment);
+  const recentForMuscle = await db.prepare(
     `SELECT e.name, COUNT(*) c FROM sets s JOIN exercises e ON e.id = s.exercise_id
      JOIN workouts w ON w.id = s.workout_id
      WHERE e.muscle = ? AND w.date >= date(?, '-28 days') GROUP BY e.name ORDER BY c DESC LIMIT 8`
@@ -437,12 +432,12 @@ export async function muscleRecs({ muscle, today }) {
 }
 
 export async function testKey() {
-  const c = client();
+  const c = await client();
   const resp = await c.messages.create({
-    model: model(),
+    model: await model(),
     max_tokens: 32,
     messages: [{ role: 'user', content: 'Reply with exactly: ok' }],
   });
-  trackUsage(resp.usage);
+  await trackUsage(resp.usage);
   return { ok: true, model: resp.model };
 }

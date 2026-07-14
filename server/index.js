@@ -6,6 +6,7 @@ import qrcode from 'qrcode-terminal';
 import { api } from './routes.js';
 import { ensureIcons } from './icons.js';
 import { aiStatus } from './ai.js';
+import { initDb, isTurso } from './db.js';
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const PUBLIC = path.join(ROOT, 'public');
@@ -53,7 +54,10 @@ const green = (s) => `\x1b[38;2;200;245;66m${s}\x1b[0m`;
 const dim = (s) => `\x1b[2m${s}\x1b[0m`;
 const bold = (s) => `\x1b[1m${s}\x1b[0m`;
 
-app.listen(PORT, '0.0.0.0', () => {
+// Prepare the database (schema + seeds) before accepting any requests.
+await initDb();
+
+app.listen(PORT, '0.0.0.0', async () => {
   const lans = lanAddresses();
   const phoneUrl = lans.length ? `http://${lans[0].address}:${PORT}` : null;
 
@@ -70,10 +74,13 @@ app.listen(PORT, '0.0.0.0', () => {
     console.log(dim('  Scan with your phone camera:'));
     qrcode.generate(phoneUrl, { small: true });
   }
-  const ai = aiStatus();
+  console.log(isTurso
+    ? green('  Storage: Turso ✓ ') + dim('(cloud database — data persists across restarts)')
+    : dim('  Storage: local file (data/ascend.db) — set TURSO_DATABASE_URL to use the cloud.'));
+  const ai = await aiStatus();
   console.log(ai.hasKey
     ? green(`  AI: connected ✓ `) + dim(`(key …${ai.last4}${ai.fromEnv ? ' from .env' : ''}, model ${ai.model})`)
-    : dim('  AI: off — put your ANTHROPIC_API_KEY in the .env file (see README) to wake the coach.'));
+    : dim('  AI: off — set ANTHROPIC_API_KEY to wake the coach.'));
   console.log('');
   console.log(dim('  Tip: if Windows asks about the firewall, click "Allow" for Private networks.'));
   console.log(dim('  Tip: on the phone, use the browser menu → "Add to Home Screen" to install Ascend.'));

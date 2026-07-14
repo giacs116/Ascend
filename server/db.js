@@ -1,4 +1,10 @@
-import { DatabaseSync } from 'node:sqlite';
+// Data layer, backed by libSQL (SQLite-compatible).
+//   • Production: set TURSO_DATABASE_URL + TURSO_AUTH_TOKEN → data lives in Turso,
+//     durable and independent of the host's disk (survives restarts/redeploys).
+//   • Local dev: no env vars → a plain SQLite file at data/ascend.db.
+// The db.prepare(sql).get/all/run shape is preserved (now async) so query SQL is
+// unchanged from the old node:sqlite version.
+import { createClient } from '@libsql/client';
 import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -6,229 +12,177 @@ import { EXERCISES, FOODS, DEFAULT_ROUTINES } from './seeds.js';
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 export const DATA_DIR = path.join(ROOT, 'data');
-mkdirSync(DATA_DIR, { recursive: true });
 
-export const db = new DatabaseSync(path.join(DATA_DIR, 'ascend.db'));
+export const isTurso = !!process.env.TURSO_DATABASE_URL;
+if (!isTurso) mkdirSync(DATA_DIR, { recursive: true });
 
-db.exec(`
-  PRAGMA journal_mode = WAL;
-  PRAGMA foreign_keys = ON;
+// Local file URL is relative to the working directory (always the project root for
+// `npm start` and the test scripts), which resolves to the same DATA_DIR path.
+const client = createClient({
+  url: process.env.TURSO_DATABASE_URL || 'file:data/ascend.db',
+  authToken: process.env.TURSO_AUTH_TOKEN,
+  intMode: 'number', // keep integers as JS numbers so res.json never sees a BigInt
+});
 
-  CREATE TABLE IF NOT EXISTS profile (
-    id INTEGER PRIMARY KEY CHECK (id = 1),
-    name TEXT NOT NULL,
-    sex TEXT NOT NULL,
-    birthdate TEXT NOT NULL,
-    height_cm REAL NOT NULL,
-    activity TEXT NOT NULL,
-    goal TEXT NOT NULL,
-    created_at TEXT NOT NULL
-  );
+// Normalize a libSQL result into plain column-keyed objects — exactly the row shape
+// the old driver returned, and safe to JSON.stringify.
+function toRows(rs) {
+  const cols = rs.columns;
+  return rs.rows.map((r) => {
+    const o = {};
+    for (let i = 0; i < cols.length; i++) o[cols[i]] = r[i];
+    return o;
+  });
+}
+const clean = (args) => args.map((a) => (a === undefined ? null : a)); // libSQL rejects undefined binds
 
-  CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT);
-
-  CREATE TABLE IF NOT EXISTS weight_log (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    date TEXT NOT NULL UNIQUE,
-    weight_kg REAL NOT NULL,
-    created_at TEXT NOT NULL
-  );
-
-  CREATE TABLE IF NOT EXISTS measurements (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    date TEXT NOT NULL,
-    kind TEXT NOT NULL,
-    value_cm REAL NOT NULL,
-    created_at TEXT NOT NULL
-  );
-
-  CREATE TABLE IF NOT EXISTS foods (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL,
-    serving TEXT NOT NULL,
-    calories REAL NOT NULL,
-    protein_g REAL NOT NULL DEFAULT 0,
-    carbs_g REAL NOT NULL DEFAULT 0,
-    fat_g REAL NOT NULL DEFAULT 0,
-    sugar_g REAL NOT NULL DEFAULT 0,
-    is_custom INTEGER NOT NULL DEFAULT 0,
-    use_count INTEGER NOT NULL DEFAULT 0
-  );
-
-  CREATE TABLE IF NOT EXISTS food_entries (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    date TEXT NOT NULL,
-    meal TEXT NOT NULL,
-    name TEXT NOT NULL,
-    qty TEXT,
-    calories REAL NOT NULL,
-    protein_g REAL NOT NULL DEFAULT 0,
-    carbs_g REAL NOT NULL DEFAULT 0,
-    fat_g REAL NOT NULL DEFAULT 0,
-    sugar_g REAL NOT NULL DEFAULT 0,
-    source TEXT NOT NULL DEFAULT 'manual',
-    created_at TEXT NOT NULL
-  );
-  CREATE INDEX IF NOT EXISTS idx_food_entries_date ON food_entries(date);
-
-  CREATE TABLE IF NOT EXISTS water_log (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    date TEXT NOT NULL,
-    ml REAL NOT NULL,
-    created_at TEXT NOT NULL
-  );
-  CREATE INDEX IF NOT EXISTS idx_water_date ON water_log(date);
-
-  CREATE TABLE IF NOT EXISTS exercises (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL UNIQUE,
-    category TEXT NOT NULL,
-    muscle TEXT,
-    equipment TEXT,
-    is_custom INTEGER NOT NULL DEFAULT 0
-  );
-
-  CREATE TABLE IF NOT EXISTS workouts (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    date TEXT NOT NULL,
-    name TEXT,
-    type TEXT NOT NULL DEFAULT 'strength',
-    started_at TEXT,
-    ended_at TEXT,
-    duration_min REAL,
-    notes TEXT,
-    created_at TEXT NOT NULL
-  );
-  CREATE INDEX IF NOT EXISTS idx_workouts_date ON workouts(date);
-
-  CREATE TABLE IF NOT EXISTS sets (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    workout_id INTEGER NOT NULL REFERENCES workouts(id) ON DELETE CASCADE,
-    exercise_id INTEGER NOT NULL REFERENCES exercises(id),
-    set_index INTEGER NOT NULL,
-    reps INTEGER,
-    weight_kg REAL,
-    duration_sec REAL,
-    distance_m REAL,
-    created_at TEXT NOT NULL
-  );
-  CREATE INDEX IF NOT EXISTS idx_sets_workout ON sets(workout_id);
-  CREATE INDEX IF NOT EXISTS idx_sets_exercise ON sets(exercise_id);
-
-  CREATE TABLE IF NOT EXISTS routines (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL,
-    items TEXT NOT NULL,
-    created_at TEXT NOT NULL
-  );
-
-  CREATE TABLE IF NOT EXISTS chat_messages (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    role TEXT NOT NULL,
-    content TEXT NOT NULL,
-    created_at TEXT NOT NULL
-  );
-
-  CREATE TABLE IF NOT EXISTS form_checks (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    date TEXT NOT NULL,
-    exercise TEXT NOT NULL,
-    score INTEGER,
-    summary TEXT,
-    feedback TEXT NOT NULL,
-    thumb TEXT,
-    created_at TEXT NOT NULL
-  );
-
-  CREATE TABLE IF NOT EXISTS muscle_recs (
-    muscle TEXT NOT NULL,
-    week TEXT NOT NULL,
-    data TEXT NOT NULL,
-    created_at TEXT NOT NULL,
-    PRIMARY KEY (muscle, week)
-  );
-
-  CREATE TABLE IF NOT EXISTS schedule_days (
-    date TEXT PRIMARY KEY,
-    kind TEXT NOT NULL,
-    label TEXT,
-    routine_id INTEGER,
-    created_at TEXT NOT NULL
-  );
-
-  CREATE TABLE IF NOT EXISTS schedule_weekly (
-    dow INTEGER PRIMARY KEY,
-    kind TEXT NOT NULL,
-    label TEXT,
-    routine_id INTEGER,
-    created_at TEXT NOT NULL
-  );
-`);
+export const db = {
+  prepare(sql) {
+    return {
+      async get(...args) { return toRows(await client.execute({ sql, args: clean(args) }))[0]; },
+      async all(...args) { return toRows(await client.execute({ sql, args: clean(args) })); },
+      async run(...args) {
+        const rs = await client.execute({ sql, args: clean(args) });
+        return { changes: Number(rs.rowsAffected), lastInsertRowid: rs.lastInsertRowid != null ? Number(rs.lastInsertRowid) : null };
+      },
+    };
+  },
+  exec: (sql) => client.executeMultiple(sql),
+  batch: (statements) => client.batch(statements, 'write'),
+};
 
 export const now = () => new Date().toISOString();
 
-export function getSetting(key, fallback = null) {
-  const row = db.prepare('SELECT value FROM settings WHERE key = ?').get(key);
+export async function getSetting(key, fallback = null) {
+  const row = await db.prepare('SELECT value FROM settings WHERE key = ?').get(key);
   return row ? row.value : fallback;
 }
 
-export function setSetting(key, value) {
+export async function setSetting(key, value) {
   if (value === null || value === undefined) {
-    db.prepare('DELETE FROM settings WHERE key = ?').run(key);
+    await db.prepare('DELETE FROM settings WHERE key = ?').run(key);
   } else {
-    db.prepare(
+    await db.prepare(
       'INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value'
     ).run(key, String(value));
   }
 }
 
-export function getProfile() {
-  return db.prepare('SELECT * FROM profile WHERE id = 1').get() ?? null;
+export async function getProfile() {
+  return (await db.prepare('SELECT * FROM profile WHERE id = 1').get()) ?? null;
 }
 
-export function latestWeight(onOrBefore = null) {
+export async function latestWeight(onOrBefore = null) {
   if (onOrBefore) {
-    return db.prepare('SELECT * FROM weight_log WHERE date <= ? ORDER BY date DESC LIMIT 1').get(onOrBefore) ?? null;
+    return (await db.prepare('SELECT * FROM weight_log WHERE date <= ? ORDER BY date DESC LIMIT 1').get(onOrBefore)) ?? null;
   }
-  return db.prepare('SELECT * FROM weight_log ORDER BY date DESC LIMIT 1').get() ?? null;
+  return (await db.prepare('SELECT * FROM weight_log ORDER BY date DESC LIMIT 1').get()) ?? null;
 }
 
-// ── One-time seeding ─────────────────────────────────────────
-function seed() {
-  const exCount = db.prepare('SELECT COUNT(*) AS c FROM exercises').get().c;
-  if (exCount === 0) {
-    const ins = db.prepare('INSERT INTO exercises (name, category, muscle, equipment) VALUES (?, ?, ?, ?)');
-    for (const [name, category, muscle, equipment] of EXERCISES) ins.run(name, category, muscle, equipment);
+// Foreign-key ON DELETE CASCADE is not relied upon (per-connection PRAGMA isn't set on
+// remote libSQL) — deletes that need to remove children do so explicitly in routes.js.
+const SCHEMA = `
+  CREATE TABLE IF NOT EXISTS profile (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    name TEXT NOT NULL, sex TEXT NOT NULL, birthdate TEXT NOT NULL,
+    height_cm REAL NOT NULL, activity TEXT NOT NULL, goal TEXT NOT NULL, created_at TEXT NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT);
+  CREATE TABLE IF NOT EXISTS weight_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, date TEXT NOT NULL UNIQUE, weight_kg REAL NOT NULL, created_at TEXT NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS measurements (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, date TEXT NOT NULL, kind TEXT NOT NULL, value_cm REAL NOT NULL, created_at TEXT NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS foods (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, serving TEXT NOT NULL, calories REAL NOT NULL,
+    protein_g REAL NOT NULL DEFAULT 0, carbs_g REAL NOT NULL DEFAULT 0, fat_g REAL NOT NULL DEFAULT 0,
+    sugar_g REAL NOT NULL DEFAULT 0, is_custom INTEGER NOT NULL DEFAULT 0, use_count INTEGER NOT NULL DEFAULT 0
+  );
+  CREATE TABLE IF NOT EXISTS food_entries (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, date TEXT NOT NULL, meal TEXT NOT NULL, name TEXT NOT NULL, qty TEXT,
+    calories REAL NOT NULL, protein_g REAL NOT NULL DEFAULT 0, carbs_g REAL NOT NULL DEFAULT 0,
+    fat_g REAL NOT NULL DEFAULT 0, sugar_g REAL NOT NULL DEFAULT 0, source TEXT NOT NULL DEFAULT 'manual', created_at TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_food_entries_date ON food_entries(date);
+  CREATE TABLE IF NOT EXISTS water_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, date TEXT NOT NULL, ml REAL NOT NULL, created_at TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_water_date ON water_log(date);
+  CREATE TABLE IF NOT EXISTS exercises (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE, category TEXT NOT NULL,
+    muscle TEXT, equipment TEXT, is_custom INTEGER NOT NULL DEFAULT 0
+  );
+  CREATE TABLE IF NOT EXISTS workouts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, date TEXT NOT NULL, name TEXT, type TEXT NOT NULL DEFAULT 'strength',
+    started_at TEXT, ended_at TEXT, duration_min REAL, notes TEXT, created_at TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_workouts_date ON workouts(date);
+  CREATE TABLE IF NOT EXISTS sets (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    workout_id INTEGER NOT NULL REFERENCES workouts(id) ON DELETE CASCADE,
+    exercise_id INTEGER NOT NULL REFERENCES exercises(id),
+    set_index INTEGER NOT NULL, reps INTEGER, weight_kg REAL, duration_sec REAL, distance_m REAL, created_at TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_sets_workout ON sets(workout_id);
+  CREATE INDEX IF NOT EXISTS idx_sets_exercise ON sets(exercise_id);
+  CREATE TABLE IF NOT EXISTS routines (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, items TEXT NOT NULL, created_at TEXT NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS chat_messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, role TEXT NOT NULL, content TEXT NOT NULL, created_at TEXT NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS form_checks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, date TEXT NOT NULL, exercise TEXT NOT NULL, score INTEGER,
+    summary TEXT, feedback TEXT NOT NULL, thumb TEXT, created_at TEXT NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS muscle_recs (
+    muscle TEXT NOT NULL, week TEXT NOT NULL, data TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY (muscle, week)
+  );
+  CREATE TABLE IF NOT EXISTS schedule_days (
+    date TEXT PRIMARY KEY, kind TEXT NOT NULL, label TEXT, routine_id INTEGER, created_at TEXT NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS schedule_weekly (
+    dow INTEGER PRIMARY KEY, kind TEXT NOT NULL, label TEXT, routine_id INTEGER, created_at TEXT NOT NULL
+  );
+`;
+
+// Called once at startup, before the server accepts requests.
+export async function initDb() {
+  await db.exec(SCHEMA);
+  await seed();
+  await migrateExerciseMuscles();
+}
+
+async function seed() {
+  if ((await db.prepare('SELECT COUNT(*) AS c FROM exercises').get()).c === 0) {
+    await db.batch(EXERCISES.map(([name, category, muscle, equipment]) => ({
+      sql: 'INSERT INTO exercises (name, category, muscle, equipment) VALUES (?, ?, ?, ?)',
+      args: [name, category, muscle, equipment],
+    })));
   }
-  const foodCount = db.prepare('SELECT COUNT(*) AS c FROM foods').get().c;
-  if (foodCount === 0) {
-    const ins = db.prepare(
-      'INSERT INTO foods (name, serving, calories, protein_g, carbs_g, fat_g, sugar_g) VALUES (?, ?, ?, ?, ?, ?, ?)'
-    );
-    for (const [name, serving, cal, p, c, f, s] of FOODS) ins.run(name, serving, cal, p, c, f, s);
+  if ((await db.prepare('SELECT COUNT(*) AS c FROM foods').get()).c === 0) {
+    await db.batch(FOODS.map(([name, serving, cal, p, c, f, s]) => ({
+      sql: 'INSERT INTO foods (name, serving, calories, protein_g, carbs_g, fat_g, sugar_g) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      args: [name, serving, cal, p, c, f, s],
+    })));
   }
-  const routineCount = db.prepare('SELECT COUNT(*) AS c FROM routines').get().c;
-  if (routineCount === 0) {
-    const findEx = db.prepare('SELECT id FROM exercises WHERE name = ?');
-    const ins = db.prepare('INSERT INTO routines (name, items, created_at) VALUES (?, ?, ?)');
-    for (const r of DEFAULT_ROUTINES) {
-      const items = r.items
-        .map((n) => findEx.get(n))
-        .filter(Boolean)
-        .map((row) => ({ exercise_id: row.id, target_sets: 3, target_reps: '8-12' }));
-      ins.run(r.name, JSON.stringify(items), now());
-    }
+  if ((await db.prepare('SELECT COUNT(*) AS c FROM routines').get()).c === 0) {
+    const byName = new Map((await db.prepare('SELECT id, name FROM exercises').all()).map((r) => [r.name, r.id]));
+    const stmts = DEFAULT_ROUTINES.map((r) => {
+      const items = r.items.map((n) => byName.get(n)).filter(Boolean).map((id) => ({ exercise_id: id, target_sets: 3, target_reps: '8-12' }));
+      return { sql: 'INSERT INTO routines (name, items, created_at) VALUES (?, ?, ?)', args: [r.name, JSON.stringify(items), now()] };
+    });
+    if (stmts.length) await db.batch(stmts);
   }
 }
-seed();
 
 // Keep seed exercises in sync with the current taxonomy (idempotent — user data untouched).
-function migrateExerciseMuscles() {
-  const upd = db.prepare('UPDATE exercises SET muscle = ?, category = ?, equipment = ? WHERE name = ? AND is_custom = 0');
-  const ins = db.prepare('INSERT OR IGNORE INTO exercises (name, category, muscle, equipment) VALUES (?, ?, ?, ?)');
+async function migrateExerciseMuscles() {
+  const stmts = [];
   for (const [name, category, muscle, equipment] of EXERCISES) {
-    upd.run(muscle, category, equipment, name);
-    ins.run(name, category, muscle, equipment);
+    stmts.push({ sql: 'UPDATE exercises SET muscle = ?, category = ?, equipment = ? WHERE name = ? AND is_custom = 0', args: [muscle, category, equipment, name] });
+    stmts.push({ sql: 'INSERT OR IGNORE INTO exercises (name, category, muscle, equipment) VALUES (?, ?, ?, ?)', args: [name, category, muscle, equipment] });
   }
+  await db.batch(stmts);
 }
-migrateExerciseMuscles();
