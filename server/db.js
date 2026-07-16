@@ -139,6 +139,9 @@ const SCHEMA = `
   CREATE TABLE IF NOT EXISTS muscle_recs (
     muscle TEXT NOT NULL, week TEXT NOT NULL, data TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY (muscle, week)
   );
+  CREATE TABLE IF NOT EXISTS muscle_overrides (
+    muscle TEXT NOT NULL, week TEXT NOT NULL, state TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY (muscle, week)
+  );
   CREATE TABLE IF NOT EXISTS schedule_days (
     date TEXT PRIMARY KEY, kind TEXT NOT NULL, label TEXT, routine_id INTEGER, created_at TEXT NOT NULL
   );

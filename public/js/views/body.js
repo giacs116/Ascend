@@ -17,8 +17,9 @@ export async function renderBody(root) {
 
   const muscles = data.muscles;
   const keys = Object.keys(muscles);
-  const trained = keys.filter((k) => muscles[k].sets > 0);
-  const statusFor = (k) => (muscles[k].sets > 0 ? 'on' : 'off');
+  const trained = keys.filter((k) => muscles[k].trained);
+  const statusFor = (k) => (muscles[k].trained ? 'on' : 'off');
+  const rerender = () => renderBody(root);
 
   view.replaceChildren();
   view.append(h('div', { class: 'vhead' },
@@ -90,7 +91,7 @@ export async function renderBody(root) {
     if (moved < 8 && downMuscle) {
       dragOff = 0;
       vibrate(8);
-      openMuscleSheet(muscles[downMuscle], data);
+      openMuscleSheet(muscles[downMuscle], data, rerender);
     } else {
       baseDeg += dragOff;
       dragOff = 0;
@@ -121,30 +122,48 @@ export async function renderBody(root) {
   const grid = h('div', { class: 'mgrid' });
   for (const k of keys) {
     const m = muscles[k];
-    const on = m.sets > 0;
-    grid.append(h('button', { class: `mchip${on ? ' on' : ''}`, onclick: () => openMuscleSheet(m, data) },
+    const on = m.trained;
+    grid.append(h('button', { class: `mchip${on ? ' on' : ''}`, onclick: () => openMuscleSheet(m, data, rerender) },
       h('span', { class: 'mchip-dot' }),
       h('span', { class: 'grow', style: { textAlign: 'left' } }, m.label),
-      h('span', { class: 'mchip-sets' }, on ? `${m.sets} set${m.sets > 1 ? 's' : ''}` : '—')));
+      h('span', { class: 'mchip-sets' }, m.sets > 0 ? `${m.sets} set${m.sets > 1 ? 's' : ''}` : on ? '✓' : '—')));
   }
   view.append(grid);
 }
 
 // ── Per-muscle detail + recommendations ──────────────────────
-function openMuscleSheet(m, weekData) {
+function openMuscleSheet(m, weekData, onChange) {
   sheet({
     title: m.label,
-    build: async (body) => {
-      const on = m.sets > 0;
-      body.append(h('div', { class: `card ${on ? '' : ''}`, style: {
+    build: async (body, { close }) => {
+      const on = m.trained;
+      const statusSub = on
+        ? (m.sets > 0 ? `${m.sets} sets · ${[...new Set(m.exercises)].slice(0, 3).join(', ')}` : 'Marked trained by you')
+        : (m.override === 'off' ? 'Marked not trained by you' : `Week ends ${fmtShort(weekData.week_end)} — there’s time.`);
+      body.append(h('div', { class: 'card', style: {
         background: on ? 'var(--accent-soft)' : 'var(--danger-soft)', border: 'none',
         display: 'flex', gap: '12px', alignItems: 'center', padding: '13px 15px',
       } },
         h('span', { style: { color: on ? 'var(--accent)' : 'var(--danger)', display: 'flex' } }, ico(on ? 'check' : 'clock', 22)),
         h('div', { class: 'grow' },
           h('div', { style: { fontWeight: 750, fontSize: '14.5px' } }, on ? 'Trained this week' : 'Not trained yet this week'),
-          h('div', { class: 'small', style: { color: 'var(--text-2)' } },
-            on ? `${m.sets} sets · ${[...new Set(m.exercises)].slice(0, 3).join(', ')}` : `Week ends ${fmtShort(weekData.week_end)} — there’s time.`))));
+          h('div', { class: 'small', style: { color: 'var(--text-2)' } }, statusSub))));
+
+      // Manual toggle — overrides what the logged sets say, per week.
+      const setOverride = async (state) => {
+        try {
+          await api('/muscles/override', { method: 'POST', body: { muscle: m.key, today: todayStr(), state } });
+          vibrate(8);
+          close();
+          onChange?.();
+        } catch (e) { toast(e.message, 'bad'); }
+      };
+      body.append(h('button', { class: 'btn btn--soft btn--block mt-8', onclick: () => setOverride(on ? 'off' : 'on') },
+        ico(on ? 'clock' : 'check', 16), on ? 'Mark as not trained' : 'Mark as trained'));
+      if (m.override) {
+        body.append(h('button', { class: 'btn btn--ghost btn--block mt-8', onclick: () => setOverride(null) },
+          'Reset to automatic (from logged sets)'));
+      }
 
       const recsWrap = h('div', {});
       const aiRow = h('div', {});

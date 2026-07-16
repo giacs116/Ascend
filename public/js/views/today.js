@@ -49,10 +49,13 @@ export async function renderToday(root) {
 
   // ── Rings ──────────────────────────────────────────────────
   const calPct = t.calories ? s.calories / t.calories : 0;
+  // The water ring is rebuilt in place whenever water is logged, so it stays live.
+  const mkWaterRing = (waterMl) => ringMeter({ pct: t.water_ml ? waterMl / t.water_ml : 0, color: cssVar('--c-water'), value: String(waterDisp(waterMl)), sub: `/ ${waterDisp(t.water_ml || 0)} ${waterUnit()}`, label: 'Water' });
+  let waterRing = mkWaterRing(s.water_ml);
   const rings = h('div', { class: 'card card--rings rings-card' },
     ringMeter({ pct: calPct, color: cssVar('--c-accent'), value: fmtInt(s.calories), sub: `/ ${fmtInt(t.calories || 0)} kcal`, label: 'Calories' }),
     ringMeter({ pct: t.protein_g ? s.protein_g / t.protein_g : 0, color: cssVar('--c-protein'), value: `${Math.round(s.protein_g)}g`, sub: `/ ${t.protein_g || 0} g`, label: 'Protein' }),
-    ringMeter({ pct: t.water_ml ? s.water_ml / t.water_ml : 0, color: cssVar('--c-water'), value: String(waterDisp(s.water_ml)), sub: `/ ${waterDisp(t.water_ml || 0)} ${waterUnit()}`, label: 'Water' }),
+    waterRing,
   );
   view.append(rings);
 
@@ -96,6 +99,9 @@ export async function renderToday(root) {
   // ── Water card ─────────────────────────────────────────────
   const waterCard = h('div', { class: 'card water-card' });
   const renderWater = (summary) => {
+    const nextRing = mkWaterRing(summary.water_ml);
+    waterRing.replaceWith(nextRing);
+    waterRing = nextRing;
     waterCard.replaceChildren(
       h('div', { class: 'water-viz row-ico tint-blue', style: { color: 'var(--c-water)', width: '46px', height: '46px', borderRadius: '14px' } }, ico('droplet', 24)),
       h('div', { class: 'water-main' },

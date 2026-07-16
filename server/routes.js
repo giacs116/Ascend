@@ -3,7 +3,7 @@ import { db, getSetting, setSetting, getProfile, latestWeight, now } from './db.
 import { computeTargets, bmi, est1RM } from './calc.js';
 import { MUSCLES, MUSCLE_RECS } from './seeds.js';
 import {
-  aiStatus, mapAiError, streamChat, estimateMeal, formCheck, testKey, muscleRecs,
+  aiStatus, mapAiError, streamChat, estimateMeal, formCheck, testKey, muscleRecs, classifyExercise,
   computeTargetsWithOverride, MODELS, DEFAULT_MODEL,
 } from './ai.js';
 
@@ -301,6 +301,20 @@ api.get('/exercises', h(async (req, res) => {
   res.json({ exercises: rows });
 }));
 
+// Custom exercises are created without a muscle tag, so they'd never light up the
+// muscle map. AI-classify them in the background (fire-and-forget — creating and
+// logging never wait on, or fail because of, the AI). Without an API key this is a no-op.
+const classifying = new Set();
+function classifyCustomExercise(id, name) {
+  if (classifying.has(id)) return;
+  classifying.add(id);
+  classifyExercise({ name })
+    .then((c) => db.prepare(
+      'UPDATE exercises SET muscle = ?, category = ?, equipment = COALESCE(equipment, ?) WHERE id = ? AND is_custom = 1 AND muscle IS NULL'
+    ).run(c.muscle, c.category, c.equipment, id))
+    .catch(() => classifying.delete(id)); // no key / AI down — retry on a later use
+}
+
 api.post('/exercises', h(async (req, res) => {
   const { name, category, muscle, equipment } = req.body || {};
   if (!name) return bad(res, 'Name required.');
@@ -310,6 +324,7 @@ api.post('/exercises', h(async (req, res) => {
   const info = await db.prepare(
     'INSERT INTO exercises (name, category, muscle, equipment, is_custom) VALUES (?, ?, ?, ?, 1)'
   ).run(clean, category || 'strength', muscle || null, equipment || null);
+  if (!muscle) classifyCustomExercise(info.lastInsertRowid, clean);
   res.json({ id: info.lastInsertRowid });
 }));
 
@@ -382,6 +397,8 @@ api.post('/workouts/:id/sets', h(async (req, res) => {
   const { exercise_id, reps, weight_kg, duration_sec, distance_m } = req.body || {};
   const ex = await db.prepare('SELECT * FROM exercises WHERE id = ?').get(num(exercise_id));
   if (!ex) return bad(res, 'Exercise not found.');
+  // Older custom exercises may still be unclassified — catch them up when they're used.
+  if (ex.is_custom && !ex.muscle) classifyCustomExercise(ex.id, ex.name);
   const prBefore = await bestBefore(ex.id);
   const idx = (await db.prepare('SELECT COUNT(*) c FROM sets WHERE workout_id = ? AND exercise_id = ?').get(w.id, ex.id)).c + 1;
   const info = await db.prepare(
@@ -533,7 +550,7 @@ api.get('/muscles', h(async (req, res) => {
      GROUP BY e.muscle, e.name`
   ).all(start, end);
   const muscles = {};
-  for (const [key, label] of MUSCLES) muscles[key] = { key, label, sets: 0, exercises: [], last_date: null };
+  for (const [key, label] of MUSCLES) muscles[key] = { key, label, sets: 0, exercises: [], last_date: null, override: null };
   for (const r of rows) {
     if (muscles[r.muscle]) {
       muscles[r.muscle].sets += r.sets;
@@ -541,11 +558,37 @@ api.get('/muscles', h(async (req, res) => {
       if (!muscles[r.muscle].last_date || r.last_date > muscles[r.muscle].last_date) muscles[r.muscle].last_date = r.last_date;
     }
   }
+  // Manual overrides win over what the logged sets say (per week).
+  for (const o of await db.prepare('SELECT muscle, state FROM muscle_overrides WHERE week = ?').all(start)) {
+    if (muscles[o.muscle]) muscles[o.muscle].override = o.state;
+  }
+  for (const k of Object.keys(muscles)) {
+    const m = muscles[k];
+    m.trained = m.override ? m.override === 'on' : m.sets > 0;
+  }
   const cw = await db.prepare(
     `SELECT COUNT(*) AS c, COALESCE(SUM(COALESCE(w.duration_min, 0)), 0) AS m FROM workouts w
      WHERE w.date >= ? AND w.date <= ? AND w.type IN ('cardio', 'sport', 'mobility') AND ${REAL_WORKOUT}`
   ).get(start, end);
   res.json({ week_start: start, week_end: end, muscles, cardio: { sessions: cw.c, minutes: Math.round(cw.m) } });
+}));
+
+// Manually mark a muscle as trained / not trained for the current week.
+// state: 'on' | 'off' | null (null clears the override → back to automatic).
+api.post('/muscles/override', h(async (req, res) => {
+  const { muscle, today, state } = req.body || {};
+  if (!MUSCLES.some(([k]) => k === muscle)) return bad(res, 'Unknown muscle group.');
+  const day = isDate(today) ? today : new Date().toISOString().slice(0, 10);
+  const { start } = weekBounds(day);
+  if (state === 'on' || state === 'off') {
+    await db.prepare(
+      `INSERT INTO muscle_overrides (muscle, week, state, created_at) VALUES (?, ?, ?, ?)
+       ON CONFLICT(muscle, week) DO UPDATE SET state = excluded.state`
+    ).run(muscle, start, state, now());
+  } else {
+    await db.prepare('DELETE FROM muscle_overrides WHERE muscle = ? AND week = ?').run(muscle, start);
+  }
+  res.json({ ok: true });
 }));
 
 // Curated exercise recommendations (no AI needed)
@@ -662,7 +705,7 @@ api.post('/reset', h(async (req, res) => {
   await db.exec(`
     DELETE FROM food_entries; DELETE FROM water_log; DELETE FROM sets; DELETE FROM workouts;
     DELETE FROM weight_log; DELETE FROM measurements; DELETE FROM chat_messages; DELETE FROM form_checks;
-    DELETE FROM muscle_recs; DELETE FROM schedule_days; DELETE FROM schedule_weekly;
+    DELETE FROM muscle_recs; DELETE FROM muscle_overrides; DELETE FROM schedule_days; DELETE FROM schedule_weekly;
     DELETE FROM foods WHERE is_custom = 1; DELETE FROM exercises WHERE is_custom = 1;
     UPDATE foods SET use_count = 0;
     DELETE FROM profile; DELETE FROM settings WHERE key NOT IN ('api_key', 'ai_model');

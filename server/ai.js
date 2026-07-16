@@ -4,6 +4,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { db, getSetting, setSetting, getProfile, latestWeight, now } from './db.js';
 import { computeTargets, bmi, est1RM } from './calc.js';
+import { MUSCLES } from './seeds.js';
 
 const ENV_PATH = path.join(path.dirname(path.dirname(fileURLToPath(import.meta.url))), '.env');
 
@@ -429,6 +430,40 @@ export async function muscleRecs({ muscle, today }) {
     maxTokens: 6000,
   });
   return result;
+}
+
+// ── Exercise classification (custom exercises → muscle map) ──
+const CLASSIFY_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['muscle', 'category', 'equipment'],
+  properties: {
+    muscle: { type: 'string', enum: [...MUSCLES.map(([k]) => k), 'none'] },
+    category: { type: 'string', enum: ['strength', 'bodyweight', 'cardio', 'sport', 'mobility'] },
+    equipment: { type: 'string' },
+  },
+};
+
+export async function classifyExercise({ name }) {
+  const r = await structuredRequest({
+    system: 'You classify exercises for the muscle map inside the Ascend fitness app.',
+    content: [{
+      type: 'text',
+      text:
+        `Classify the exercise "${name}".\n` +
+        `muscle = the PRIMARY muscle group it trains, one of: ${MUSCLES.map(([k, l]) => `${k} (${l})`).join(', ')}. ` +
+        `Use "none" only for cardio, sport, or whole-body work with no primary muscle.\n` +
+        `category = strength, bodyweight, cardio, sport, or mobility.\n` +
+        `equipment = one short lowercase word like "barbell", "dumbbell", "cable", "machine", "kettlebell", "band", "bodyweight" — or "none" if unclear.`,
+    }],
+    schema: CLASSIFY_SCHEMA,
+    maxTokens: 1500,
+  });
+  return {
+    muscle: r.muscle === 'none' ? null : r.muscle,
+    category: r.category,
+    equipment: r.equipment === 'none' ? null : r.equipment,
+  };
 }
 
 export async function testKey() {

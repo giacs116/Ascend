@@ -45,8 +45,8 @@ export async function renderTrain(root) {
   // Muscle map hero
   if (muscles) {
     const keys = Object.keys(muscles.muscles);
-    const trained = keys.filter((k) => muscles.muscles[k].sets > 0);
-    const statusFor = (k) => (muscles.muscles[k].sets > 0 ? 'on' : 'off');
+    const trained = keys.filter((k) => muscles.muscles[k].trained);
+    const statusFor = (k) => (muscles.muscles[k].trained ? 'on' : 'off');
     view.append(h('button', { class: 'card', style: { width: '100%', textAlign: 'left', marginTop: '12px' }, onclick: () => App.go('#/body') },
       h('div', { class: 'flex', style: { marginBottom: '6px' } },
         h('div', { class: 'grow' },
